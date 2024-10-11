@@ -1348,8 +1348,10 @@ class BeliefPropagationWithMessageParsing(Inference):
 
             if len(incoming_factors) == 0:
                 # Is an unobserved leaf variable
+                message = self.bp.model.get_uniform_message(variable)
+
                 return self.bp.calc_variable_node_message(
-                    variable, [] + virtual_messages
+                    variable, [message] + virtual_messages
                 )
             else:
                 # Else, get the incoming messages from all incoming factors
@@ -1502,9 +1504,7 @@ class BeliefPropagationWithMessageParsing(Inference):
         incoming_messages: list
             list of messages coming to this variable node
         """
-        if len(incoming_messages) == 0:
-            return self.model.get_uniform_message(variable)
-        elif len(incoming_messages) == 1:
+        if len(incoming_messages) == 1:
             return incoming_messages[0]
         else:
             outgoing_message = reduce(np.multiply, incoming_messages)
