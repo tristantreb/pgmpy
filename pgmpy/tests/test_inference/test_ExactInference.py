@@ -1220,13 +1220,28 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
     def test_query_single_variable_can_return_all_computed_messages(self):
         res, messages = self.belief_propagation.query(["B"], get_messages=True)
         assert np.allclose(res["B"].values, np.array([0.11, 0.21, 0.68]), atol=1e-20)
-        # Assert on messages values
+        # Messages from A to B
         assert np.allclose(messages["['A'] -> A"], np.array([0.4, 0.6]), atol=1e-20)
+        assert np.allclose(
+            messages["A -> ['B', 'A']"], np.array([0.4, 0.6]), atol=1e-20
+        )
         assert np.allclose(
             messages["['B', 'A'] -> B"], np.array([0.11, 0.21, 0.68]), atol=1e-20
         )
+
+        # Messages from C to B
+        assert np.allclose(
+            messages["C -> ['C', 'B']"], np.array([0.5, 0.5]), atol=1e-20
+        )
         assert np.allclose(
             messages["['C', 'B'] -> B"],
+            np.array([0.33333333, 0.33333333, 0.33333333]),
+            atol=1e-20,
+        )
+
+        # Messages from D to B
+        assert np.allclose(
+            messages["D -> ['D', 'B']"],
             np.array([0.33333333, 0.33333333, 0.33333333]),
             atol=1e-20,
         )
@@ -1255,7 +1270,7 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
         )
         assert np.allclose(
             messages["['D', 'B'] -> B"],
-            np.array([0.33333333, 0.33333333, 0.33333333]),
+            np.array([0.33333333, 0.3333333, 0.33333333]),
             atol=1e-20,
         )
 

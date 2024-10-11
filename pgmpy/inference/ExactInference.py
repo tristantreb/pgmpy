@@ -1395,9 +1395,15 @@ class BeliefPropagationWithMessageParsing(Inference):
                 # Else, get the incoming messages from all incoming variables
                 incoming_messages = []
                 for var in incoming_vars:
-                    incoming_messages.append(
-                        self.schedule_variable_node_messages(var, factor)
-                    )
+                    incoming_message = self.schedule_variable_node_messages(var, factor)
+
+                    if self.all_messages is not None:
+                        # Store the message if it's not already stored
+                        node_factor_key = f"{var} -> {factor.variables}"
+                        if node_factor_key not in self.all_messages.keys():
+                            self.all_messages[node_factor_key] = incoming_message
+
+                    incoming_messages.append(incoming_message)
                 return self.bp.calc_factor_node_message(
                     factor, incoming_messages, from_variable
                 )
@@ -1419,8 +1425,8 @@ class BeliefPropagationWithMessageParsing(Inference):
             None if no evidence.
         virtual_evidence: list or None (default: None)
             A list of pgmpy.factors.discrete.TabularCPD representing the virtual
-            evidences. Each virtual evidence becomes a virtual message that gets added to
-            the list of computed messages incoming to the variable node.
+            evidences. Each virtual evidence for a variable node becomes a virtual message
+            that gets added to the list of computed messages incoming to that variable node.
             None if no virtual evidence.
 
         Returns
@@ -1430,8 +1436,9 @@ class BeliefPropagationWithMessageParsing(Inference):
         If `get_messages` is True, returns:
             1. A dict of the variables, posterior distributions pairs:
             {variable: pgmpy.factors.discrete.DiscreteFactor}
-            2. A dict of all messages sent from a factor to a node:
-            {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array}.
+            2. A dict of all messages sent across the graph, in the form:
+            {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array}, or
+            {"variable -> {pgmpy.factors.discrete.DiscreteFactor.variables}": np.array}.
 
         Examples
         --------
