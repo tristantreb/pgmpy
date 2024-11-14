@@ -585,7 +585,9 @@ class BayesianNetwork(DAG):
         self.add_cpds(*cpds)
         logger.disabled = False
 
-    def predict(self, data, algo=None, stochastic=False, n_jobs=-1, **kwargs):
+    def predict(
+        self, data, algo=None, stochastic=False, n_jobs=-1, seed=None, **kwargs
+    ):
         """
         Predicts states of all the missing variables.
 
@@ -604,6 +606,9 @@ class BayesianNetwork(DAG):
 
         n_jobs: int (default: -1)
             The number of CPU cores to use. If -1, uses all available cores.
+
+        seed: int (default: None)
+            When `stochastic=True`, the seed value to use for random number generators.
 
         **kwargs
             Optional keyword arguments specific to the selected algorithm.
@@ -672,7 +677,7 @@ class BayesianNetwork(DAG):
         >>> predict_data.drop('E', axis=1, inplace=True)
         >>> approx_inf_parameters = {'n_samples':int(1e3),'seed':42}
         >>> y_pred = model.predict(predict_data,algo=ApproxInference,**approx_inf_parameters)
-        >>> y_pred
+        >>> y_pred['E']
             E
         800 1
         801 0
@@ -710,54 +715,50 @@ class BayesianNetwork(DAG):
                 )
 
         model_inference = algo(self)
-
-        if stochastic:
-            data_unique_indexes = data.groupby(list(data.columns)).apply(
-                lambda t: t.index.tolist()
+        data_unique_indexes = data.groupby(list(data.columns), dropna=False).apply(
+            lambda t: t.index.tolist()
+        )
+        data_unique = data_unique_indexes.index.to_frame()
+        pred_values = Parallel(n_jobs=n_jobs)(
+            delayed(model_inference.query if stochastic else model_inference.map_query)(
+                variables=missing_variables.union(
+                    set(data_point.index[data_point.isna()])
+                ),
+                evidence=data_point[~data_point.isna()].to_dict(),
+                show_progress=False,
+                **kwargs,
             )
-            data_unique = data_unique_indexes.index.to_frame()
-
-            pred_values = Parallel(n_jobs=n_jobs)(
-                delayed(model_inference.query)(
-                    variables=missing_variables,
-                    evidence=data_point.to_dict(),
-                    show_progress=False,
-                    **kwargs,
-                )
-                for index, data_point in tqdm(
-                    data_unique.iterrows(), total=data_unique.shape[0]
-                )
+            for index, data_point in tqdm(
+                data_unique.iterrows(), total=data_unique.shape[0]
             )
-            predictions = pd.DataFrame()
-            for i, row in enumerate(data_unique_indexes):
-                p = pred_values[i].sample(n=len(row))
-                p.index = row
-                predictions = pd.concat((predictions, p), copy=False)
+        )
 
-            return predictions.reindex(data.index)
+        all_columns = data.columns.tolist() + [col for col in missing_variables]
+        predictions = pd.DataFrame()
 
-        else:
-            data_unique = data.drop_duplicates()
-            pred_values = []
-
-            # Send state_names dict from one of the estimated CPDs to the inference class.
-            pred_values = Parallel(n_jobs=n_jobs)(
-                delayed(model_inference.map_query)(
-                    variables=missing_variables,
-                    evidence=data_point.to_dict(),
-                    show_progress=False,
-                    **kwargs,
+        for i, row in enumerate(data_unique_indexes):
+            if stochastic:
+                predicted_df = (
+                    pred_values[i].sample(n=len(row), seed=seed).reset_index(drop=True)
                 )
-                for index, data_point in tqdm(
-                    data_unique.iterrows(), total=data_unique.shape[0]
-                )
-            )
+            else:
+                predicted = pd.DataFrame(pred_values[i], index=[0])
+                predicted_df = predicted.loc[
+                    predicted.index.repeat(len(row))
+                ].reset_index(drop=True)
 
-            df_results = pd.DataFrame(pred_values, index=data_unique.index)
-            data_with_results = pd.concat([data_unique, df_results], axis=1)
-            return data.merge(data_with_results, how="left").loc[
-                :, list(missing_variables)
-            ]
+            initial_variables = data_unique.iloc[[i]].reset_index(drop=True)
+            known_variables = initial_variables.dropna(axis=1)
+            known_df = known_variables.loc[
+                known_variables.index.repeat(len(row))
+            ].reset_index(drop=True)
+
+            complete_data = pd.concat([predicted_df, known_df], axis="columns")
+            complete_data.index = row
+            complete_data = complete_data.reindex(columns=all_columns)
+            predictions = pd.concat([predictions, complete_data], copy=False)
+
+        return predictions.sort_index()
 
     def predict_probability(self, data):
         """
@@ -1006,7 +1007,12 @@ class BayesianNetwork(DAG):
 
     @staticmethod
     def get_random(
-        n_nodes=5, edge_prob=0.5, node_names=None, n_states=None, latents=False
+        n_nodes=5,
+        edge_prob=0.5,
+        node_names=None,
+        n_states=None,
+        latents=False,
+        seed=None,
     ):
         """
         Returns a randomly generated Bayesian Network on `n_nodes` variables
@@ -1034,6 +1040,9 @@ class BayesianNetwork(DAG):
         latents: bool (default: False)
             If True, also creates latent variables.
 
+        seed: int (default: None)
+            The seed value for random number generators.
+
         Returns
         -------
         Random DAG: pgmpy.base.DAG
@@ -1058,7 +1067,8 @@ class BayesianNetwork(DAG):
             node_names = list(range(n_nodes))
 
         if n_states is None:
-            n_states = np.random.randint(low=1, high=5, size=n_nodes)
+            gen = np.random.default_rng(seed=seed)
+            n_states = gen.integers(low=1, high=5, size=n_nodes)
             n_states_dict = {node_names[i]: n_states[i] for i in range(n_nodes)}
 
         elif isinstance(n_states, int):
@@ -1069,7 +1079,11 @@ class BayesianNetwork(DAG):
             n_states_dict = n_states
 
         dag = DAG.get_random(
-            n_nodes=n_nodes, edge_prob=edge_prob, node_names=node_names, latents=latents
+            n_nodes=n_nodes,
+            edge_prob=edge_prob,
+            node_names=node_names,
+            latents=latents,
+            seed=seed,
         )
         bn_model = BayesianNetwork(dag.edges(), latents=dag.latents)
         bn_model.add_nodes_from(dag.nodes())
@@ -1079,14 +1093,17 @@ class BayesianNetwork(DAG):
             parents = list(bn_model.predecessors(node))
             cpds.append(
                 TabularCPD.get_random(
-                    variable=node, evidence=parents, cardinality=n_states_dict
+                    variable=node,
+                    evidence=parents,
+                    cardinality=n_states_dict,
+                    seed=seed,
                 )
             )
 
         bn_model.add_cpds(*cpds)
         return bn_model
 
-    def get_random_cpds(self, n_states=None, inplace=False):
+    def get_random_cpds(self, n_states=None, inplace=False, seed=None):
         """
         Given a `model`, generates and adds random `TabularCPD` for each node resulting in a fully parameterized network.
 
@@ -1099,6 +1116,10 @@ class BayesianNetwork(DAG):
         inplace: bool (default: False)
             If inplace=True, adds the generated TabularCPDs to `model` itself, else creates
             a copy of the model.
+
+        seed: int (default: None)
+            The seed value for random number generators.
+
         """
         if isinstance(n_states, int):
             n_states = {var: n_states for var in self.nodes()}
@@ -1106,8 +1127,9 @@ class BayesianNetwork(DAG):
             if set(n_states.keys()) != set(self.nodes()):
                 raise ValueError("Number of states not specified for each variable")
         elif n_states is None:
+            gen = np.random.default_rng(seed=seed)
             n_states = {
-                var: np.random.randint(low=1, high=5, size=1)[0] for var in self.nodes()
+                var: gen.integers(low=1, high=5, size=1)[0] for var in self.nodes()
             }
 
         model = self if inplace else self.copy()
@@ -1116,7 +1138,7 @@ class BayesianNetwork(DAG):
             parents = list(model.predecessors(node))
             cpds.append(
                 TabularCPD.get_random(
-                    variable=node, evidence=parents, cardinality=n_states
+                    variable=node, evidence=parents, cardinality=n_states, seed=seed
                 )
             )
 

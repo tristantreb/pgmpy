@@ -410,13 +410,15 @@ class TestBayesianModelMethods(unittest.TestCase):
             self.assertTrue(np.allclose(np.sum(cpd.get_values(), axis=0), 1, atol=0.01))
 
     def test_get_random_cpds(self):
-        model = BayesianNetwork(DAG.get_random(n_nodes=5, edge_prob=0.5).edges())
+        model = BayesianNetwork(
+            DAG.get_random(n_nodes=5, edge_prob=0.5, seed=42).edges()
+        )
 
         param_model = model.get_random_cpds()
         self.assertEqual(len(param_model.cpds), 5)
         self.assertTrue(param_model.check_model())
 
-        param_model = model.get_random_cpds(n_states=4)
+        param_model = model.get_random_cpds(n_states=4, seed=42)
         self.assertEqual(len(param_model.cpds), 5)
         self.assertTrue(param_model.check_model())
         self.assertTrue(
@@ -424,13 +426,13 @@ class TestBayesianModelMethods(unittest.TestCase):
         )
 
         n_states_dict = {0: 3, 1: 5, 2: 4, 3: 9, 4: 3}
-        param_model = model.get_random_cpds(n_states=n_states_dict)
+        param_model = model.get_random_cpds(n_states=n_states_dict, seed=42)
         self.assertEqual(len(param_model.cpds), 5)
         self.assertTrue(param_model.check_model())
         for var in range(5):
             self.assertEqual(param_model.get_cardinality(var), n_states_dict[var])
 
-        model.get_random_cpds(inplace=True)
+        model.get_random_cpds(inplace=True, seed=42)
         self.assertEqual(len(model.cpds), 5)
         self.assertTrue(model.check_model())
 
@@ -1018,138 +1020,44 @@ class TestBayesianModelFitPredict(unittest.TestCase):
         titanic = BayesianNetwork()
         titanic.add_edges_from([("Sex", "Survived"), ("Pclass", "Survived")])
         titanic.fit(self.titanic_data2[500:])
-        var_el_parameters = {"elimination_order": "WeightedMinFill"}
 
-        p1_variable_elimination = titanic.predict(
-            self.titanic_data2[["Sex", "Pclass"]][:30], **var_el_parameters
-        )
+        p1_ve = titanic.predict(self.titanic_data2[["Sex", "Pclass"]][:30])
 
-        p1_belief_propagation = titanic.predict(
+        p1_bp = titanic.predict(
             self.titanic_data2[["Sex", "Pclass"]][:30], algo=BeliefPropagation
         )
 
-        p2_variable_elimination = titanic.predict(
-            self.titanic_data2[["Survived", "Pclass"]][:30]
-        )
+        self.assertEqual(p1_ve.shape, (30, 3))
+        self.assertEqual(p1_bp.shape, (30, 3))
+        self.assertTrue((p1_ve.value_counts() == [10, 9, 3, 3, 3, 2]).all())
+        self.assertTrue((p1_bp.value_counts() == [10, 9, 3, 3, 3, 2]).all())
 
-        p2_approx_inference = titanic.predict(
+        p2_ve = titanic.predict(self.titanic_data2[["Survived", "Pclass"]][:30])
+
+        p2_app = titanic.predict(
             self.titanic_data2[["Survived", "Pclass"]][:30],
             algo=ApproxInference,
             seed=42,
         )
 
+        self.assertEqual(p2_ve.shape, (30, 3))
+        self.assertEqual(p2_app.shape, (30, 3))
+        self.assertTrue((p2_ve.value_counts() == [12, 7, 4, 4, 2, 1]).all())
+        self.assertTrue((p2_app.value_counts() == [12, 7, 4, 4, 2, 1]).all())
+
         p3 = titanic.predict(self.titanic_data2[["Survived", "Sex"]][:30])
 
-        p1_res = np.array(
-            [
-                "0",
-                "1",
-                "0",
-                "1",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "1",
-                "0",
-                "1",
-                "0",
-                "0",
-                "0",
-                "1",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-            ]
+        gen = np.random.default_rng(seed=42)
+        mask = gen.choice(
+            [True, False], size=self.titanic_data2[["Survived", "Sex"]][:30].shape
         )
-        p2_res = np.array(
-            [
-                "male",
-                "female",
-                "female",
-                "female",
-                "male",
-                "male",
-                "male",
-                "male",
-                "female",
-                "female",
-                "female",
-                "female",
-                "male",
-                "male",
-                "male",
-                "female",
-                "male",
-                "female",
-                "male",
-                "female",
-                "male",
-                "female",
-                "female",
-                "female",
-                "male",
-                "female",
-                "male",
-                "male",
-                "female",
-                "male",
-            ]
+        p3_nans = titanic.predict(
+            self.titanic_data2[["Survived", "Sex"]][:30].mask(mask)
         )
-        p3_res = np.array(
-            [
-                "3",
-                "1",
-                "1",
-                "1",
-                "3",
-                "3",
-                "3",
-                "3",
-                "1",
-                "1",
-                "1",
-                "1",
-                "3",
-                "3",
-                "3",
-                "1",
-                "3",
-                "1",
-                "3",
-                "1",
-                "3",
-                "1",
-                "1",
-                "1",
-                "3",
-                "1",
-                "3",
-                "3",
-                "1",
-                "3",
-            ]
-        )
-
-        np_test.assert_array_equal(p1_variable_elimination.values.ravel(), p1_res)
-        np_test.assert_array_equal(p1_belief_propagation.values.ravel(), p1_res)
-
-        np_test.assert_array_equal(p2_variable_elimination.values.ravel(), p2_res)
-        np_test.assert_array_equal(p2_approx_inference.values.ravel(), p2_res)
-
-        np_test.assert_array_equal(p3.values.ravel(), p3_res)
+        self.assertEqual(p3.shape, (30, 3))
+        self.assertEqual(p3_nans.shape, (30, 3))
+        self.assertTrue((p3.value_counts() == [12, 12, 3, 3]).all())
+        self.assertTrue((p3_nans.value_counts() == [15, 8, 7]).all())
 
     def test_predict_stochastic(self):
         titanic = BayesianNetwork()
@@ -1157,25 +1065,33 @@ class TestBayesianModelFitPredict(unittest.TestCase):
         titanic.fit(self.titanic_data2[500:])
 
         p1 = titanic.predict(
-            self.titanic_data2[["Sex", "Pclass"]][:30], stochastic=True
+            self.titanic_data2[["Sex", "Pclass"]][:30],
+            stochastic=True,
+            seed=42,
         )
         p2 = titanic.predict(
-            self.titanic_data2[["Survived", "Pclass"]][:30], stochastic=True
+            self.titanic_data2[["Survived", "Pclass"]][:30],
+            stochastic=True,
+            seed=42,
         )
         p3 = titanic.predict(
-            self.titanic_data2[["Survived", "Sex"]][:30], stochastic=True
+            self.titanic_data2[["Survived", "Sex"]][:30],
+            stochastic=True,
+            seed=42,
         )
 
-        # Acceptable range between 15 - 20.
-        # TODO: Is there a better way to test this?
-        self.assertTrue(p1.value_counts().values[0] <= 23)
-        self.assertTrue(p1.value_counts().values[0] >= 15)
+        self.assertEqual(p1.shape, (30, 3))
+        self.assertEqual(p1["Survived"].value_counts().loc["0"], 15)
+        self.assertEqual(p1["Survived"].value_counts().loc["1"], 15)
 
-        self.assertTrue(p2.value_counts().values[0] <= 22)
-        self.assertTrue(p2.value_counts().values[0] >= 15)
+        self.assertEqual(p2.shape, (30, 3))
+        self.assertEqual(p2["Sex"].value_counts()["male"], 23)
+        self.assertEqual(p2["Sex"].value_counts()["female"], 7)
 
-        self.assertTrue(p3.value_counts().values[0] <= 19)
-        self.assertTrue(p3.value_counts().values[0] >= 8)
+        self.assertEqual(p3.shape, (30, 3))
+        self.assertEqual(p3["Pclass"].value_counts().loc["1"], 6)
+        self.assertEqual(p3["Pclass"].value_counts().loc["2"], 3)
+        self.assertEqual(p3["Pclass"].value_counts().loc["3"], 21)
 
     def test_connected_predict(self):
         np.random.seed(42)
@@ -1190,7 +1106,7 @@ class TestBayesianModelFitPredict(unittest.TestCase):
         predict_data.drop("E", axis=1, inplace=True)
         e_predict = self.model_connected.predict(predict_data)
         np_test.assert_array_equal(
-            e_predict.values.ravel(),
+            e_predict["E"].values.ravel(),
             np.array(
                 [
                     1,
