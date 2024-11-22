@@ -777,7 +777,7 @@ class DAG(nx.DiGraph):
 
         for node in nodes:
             if node not in self.nodes():
-                raise ValueError(f"Node {node} not in not in graph")
+                raise ValueError(f"Node {node} not in graph")
 
         ancestors_list = set()
         nodes_list = set(nodes)
