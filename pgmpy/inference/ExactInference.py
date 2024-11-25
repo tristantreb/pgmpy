@@ -1289,7 +1289,9 @@ class BeliefPropagationWithMessageParsing(Inference):
             self.variables = variables
             self.evidence = evidence
             self.virtual_evidence = virtual_evidence
-            self.all_messages = {} if get_messages else None
+            self.get_messages = get_messages
+            # If more than 1 variable we can prevent calculating two times the same message
+            self.all_messages = {} if get_messages or len(variables) > 1 else None
 
         def run(self):
             agg_res = {}
@@ -1299,10 +1301,10 @@ class BeliefPropagationWithMessageParsing(Inference):
                     from_factor=None,
                 )
                 agg_res[variable] = DiscreteFactor([variable], [len(res)], res)
-            if self.all_messages is None:
-                return agg_res
-            else:
+            if self.get_messages:
                 return agg_res, self.all_messages
+            else:
+                return agg_res
 
         def schedule_variable_node_messages(
             self,
@@ -1357,15 +1359,21 @@ class BeliefPropagationWithMessageParsing(Inference):
                 # Else, get the incoming messages from all incoming factors
                 incoming_messages = []
                 for factor in incoming_factors:
-                    incoming_message = self.schedule_factor_node_messages(
-                        factor, variable
-                    )
-
                     if self.all_messages is not None:
-                        # Store the message if it's not already stored
+                        # Check if the message is already stored
                         factor_node_key = f"{factor.variables} -> {variable}"
-                        if factor_node_key not in self.all_messages.keys():
+                        if factor_node_key in self.all_messages.keys():
+                            incoming_message = self.all_messages[factor_node_key]
+                        else:
+                            # If not compute it and store it
+                            incoming_message = self.schedule_factor_node_messages(
+                                factor, variable
+                            )
                             self.all_messages[factor_node_key] = incoming_message
+                    else:
+                        incoming_message = self.schedule_factor_node_messages(
+                            factor, variable
+                        )
 
                     incoming_messages.append(incoming_message)
                 return self.bp.calc_variable_node_message(
@@ -1395,13 +1403,21 @@ class BeliefPropagationWithMessageParsing(Inference):
                 # Else, get the incoming messages from all incoming variables
                 incoming_messages = []
                 for var in incoming_vars:
-                    incoming_message = self.schedule_variable_node_messages(var, factor)
-
                     if self.all_messages is not None:
-                        # Store the message if it's not already stored
+                        # Check if the message is already stored
                         node_factor_key = f"{var} -> {factor.variables}"
-                        if node_factor_key not in self.all_messages.keys():
+                        if node_factor_key in self.all_messages.keys():
+                            incoming_message = self.all_messages[node_factor_key]
+                        else:
+                            # If not compute it and store it
+                            incoming_message = self.schedule_variable_node_messages(
+                                var, factor
+                            )
                             self.all_messages[node_factor_key] = incoming_message
+                    else:
+                        incoming_message = self.schedule_variable_node_messages(
+                            var, factor
+                        )
 
                     incoming_messages.append(incoming_message)
                 return self.bp.calc_factor_node_message(
