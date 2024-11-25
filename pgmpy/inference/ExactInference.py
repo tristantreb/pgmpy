@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import copy
 import itertools
+import operator
 from functools import reduce
 
 import networkx as nx
@@ -1284,6 +1285,7 @@ class BeliefPropagationWithMessageParsing(Inference):
             evidence,
             virtual_evidence,
             get_messages,
+            precomp_messages,
         ):
             self.bp = belief_propagation
             self.variables = variables
@@ -1291,7 +1293,11 @@ class BeliefPropagationWithMessageParsing(Inference):
             self.virtual_evidence = virtual_evidence
             self.get_messages = get_messages
             # If more than 1 variable we can prevent calculating two times the same message
-            self.all_messages = {} if get_messages or len(variables) > 1 else None
+            self.all_messages = (
+                precomp_messages
+                if precomp_messages is not None
+                else {} if get_messages or len(variables) > 1 else None
+            )
 
         def run(self):
             agg_res = {}
@@ -1393,8 +1399,6 @@ class BeliefPropagationWithMessageParsing(Inference):
             from_variable: str
                 The variable requesting the message, as part of the recursion.
             """
-            assert from_variable is not None, "from_var must be specified"
-
             incoming_vars = [var for var in factor.variables if var != from_variable]
             if len(incoming_vars) == 0:
                 # from_var is a root variable. The factor is its prior
@@ -1425,7 +1429,12 @@ class BeliefPropagationWithMessageParsing(Inference):
                 )
 
     def query(
-        self, variables, evidence=None, virtual_evidence=None, get_messages=False
+        self,
+        variables,
+        evidence=None,
+        virtual_evidence=None,
+        get_messages=False,
+        precomp_messages=None,
     ):
         """
         Computes the posterior distributions for each of the queried variable,
@@ -1444,6 +1453,13 @@ class BeliefPropagationWithMessageParsing(Inference):
             evidences. Each virtual evidence for a variable node becomes a virtual message
             that gets added to the list of computed messages incoming to that variable node.
             None if no virtual evidence.
+        get_messages: bool (default: False)
+            If True, returns all the messages that have been computed during the query
+        precomp_messages: dict or None (default: None)
+            A dict of precomputed messages to use in the query. Use precomputed messages when
+            running multiple queries on the same graph with the same evidence. The dict should contain
+            entries in the form: {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array},
+            or {"variable -> {pgmpy.factors.discrete.DiscreteFactor.variables}": np.array}.
 
         Returns
         -------
@@ -1508,7 +1524,12 @@ class BeliefPropagationWithMessageParsing(Inference):
                 )
 
         query = self._RecursiveMessageSchedulingQuery(
-            self, variables, evidence, virtual_evidence, get_messages
+            self,
+            variables,
+            evidence,
+            virtual_evidence,
+            get_messages,
+            precomp_messages.copy(),
         )
         return query.run()
 
@@ -1531,7 +1552,7 @@ class BeliefPropagationWithMessageParsing(Inference):
             return incoming_messages[0]
         else:
             outgoing_message = reduce(np.multiply, incoming_messages)
-        return outgoing_message / np.sum(outgoing_message)
+        return outgoing_message / outgoing_message.sum()
 
     @staticmethod
     def calc_factor_node_message(factor, incoming_messages, target_var):
@@ -1571,8 +1592,6 @@ class BeliefPropagationWithMessageParsing(Inference):
         incoming_messages = list(reversed(incoming_messages))
 
         # Reduce the CPT with the inverted list of incoming messages
-        outgoing_message = reduce(
-            lambda cpt_reduced, m: np.matmul(cpt_reduced, m), incoming_messages, cpt
-        )
+        outgoing_message = reduce(operator.matmul, incoming_messages, cpt)
         # Normalise
-        return outgoing_message / sum(outgoing_message)
+        return outgoing_message / outgoing_message.sum()
