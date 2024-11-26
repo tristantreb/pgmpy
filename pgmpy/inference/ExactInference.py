@@ -1294,7 +1294,7 @@ class BeliefPropagationWithMessageParsing(Inference):
             self.get_messages = get_messages
             # If more than 1 variable we can prevent calculating two times the same message
             self.all_messages = (
-                precomp_messages
+                precomp_messages.copy()
                 if precomp_messages is not None
                 else {} if get_messages or len(variables) > 1 else None
             )
@@ -1529,7 +1529,7 @@ class BeliefPropagationWithMessageParsing(Inference):
             evidence,
             virtual_evidence,
             get_messages,
-            precomp_messages.copy(),
+            precomp_messages,
         )
         return query.run()
 
