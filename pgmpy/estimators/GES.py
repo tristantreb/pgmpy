@@ -9,11 +9,14 @@ from pgmpy.estimators import (
     AIC,
     BIC,
     K2,
+    AICCondGauss,
     AICGauss,
     BDeu,
     BDs,
+    BICCondGauss,
     BICGauss,
     LogLikelihoodCondGauss,
+    LogLikelihoodGauss,
     ScoreCache,
     StructureEstimator,
     StructureScore,
@@ -81,7 +84,7 @@ class GES(StructureEstimator):
             current_model.add_edge(u, v)
         return potential_flips
 
-    def estimate(self, scoring_method="bic", min_improvement=1e-6, debug=False):
+    def estimate(self, scoring_method="bic-d", min_improvement=1e-6, debug=False):
         """
         Estimates the DAG from the data.
 
@@ -89,8 +92,9 @@ class GES(StructureEstimator):
         ----------
         scoring_method: str or StructureScore instance
             The score to be optimized during structure estimation.  Supported
-            structure scores: k2, bdeu, bds, bic, aic, bic-g, aic-g, cond-gauss. Also accepts a
-            custom score, but it should be an instance of `StructureScore`.
+            structure scores: k2, bdeu, bds, bic-d, aic-d, ll-g, aic-g, bic-g,
+            ll-cg, aic-cg, bic-cg. Also accepts a custom score, but it should
+            be an instance of `StructureScore`.
 
         min_improvement: float
             The operation (edge addition, removal, or flipping) would only be performed if the
@@ -111,7 +115,7 @@ class GES(StructureEstimator):
         >>> # Learn the model structure using GES algorithm from `df`
         >>> from pgmpy.estimators import GES
         >>> est = GES(data)
-        >>> dag = est.estimate(scoring_method='bic')
+        >>> dag = est.estimate(scoring_method='bic-d')
         >>> len(dag.nodes())
         37
         >>> len(dag.edges())
@@ -123,11 +127,14 @@ class GES(StructureEstimator):
             "k2": K2,
             "bdeu": BDeu,
             "bds": BDs,
-            "bic": BIC,
-            "aic": AIC,
+            "bic-d": BIC,
+            "aic-d": AIC,
+            "ll-g": LogLikelihoodGauss,
             "aic-g": AICGauss,
             "bic-g": BICGauss,
-            "cond-gauss": LogLikelihoodCondGauss,
+            "ll-cg": LogLikelihoodCondGauss,
+            "aic-cg": AICCondGauss,
+            "bic-cg": BICCondGauss,
         }
         if isinstance(scoring_method, str):
             if scoring_method.lower() in [

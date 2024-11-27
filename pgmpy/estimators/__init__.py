@@ -8,8 +8,11 @@ from pgmpy.estimators.StructureScore import (
     BDs,
     BIC,
     BICGauss,
+    BICCondGauss,
     AIC,
     AICGauss,
+    AICCondGauss,
+    LogLikelihoodGauss,
     LogLikelihoodCondGauss,
 )
 from pgmpy.estimators.ExhaustiveSearch import ExhaustiveSearch
@@ -24,7 +27,6 @@ from pgmpy.estimators.base import MarginalEstimator
 from pgmpy.estimators.MirrorDescentEstimator import MirrorDescentEstimator
 from pgmpy.estimators.expert import ExpertInLoop
 from pgmpy.estimators.GES import GES
-
 
 __all__ = [
     "BaseEstimator",
@@ -53,5 +55,8 @@ __all__ = [
     "MarginalEstimator",
     "MirrorDescentEstimator",
     "GES",
+    "LogLikelihoodGauss",
     "LogLikelihoodCondGauss",
+    "AICCondGauss",
+    "BICCondGauss",
 ]
