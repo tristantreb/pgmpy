@@ -9,6 +9,7 @@ import pandas as pd
 from pgmpy.base import UndirectedGraph
 from pgmpy.global_vars import logger
 from pgmpy.independencies import Independencies
+from pgmpy.utils.parser import parse_lavaan
 
 
 class DAG(nx.DiGraph):
@@ -71,7 +72,14 @@ class DAG(nx.DiGraph):
     3
     """
 
-    def __init__(self, ebunch=None, latents=set()):
+    def __init__(self, ebunch=None, latents=set(), lavaan_str=None):
+        if lavaan_str:
+            ebunch, latents, err_corr, _ = parse_lavaan(lavaan_str)
+            if err_corr:
+                logger.warning(
+                    f"Residual correlations {err_corr} are ignored in DAG. Use the SEM class to keep them."
+                )
+
         super(DAG, self).__init__(ebunch)
         self.latents = set(latents)
         cycles = []
@@ -84,6 +92,33 @@ class DAG(nx.DiGraph):
             out_str += "\nEdges indicating the path taken for a loop: "
             out_str += "".join([f"({u},{v}) " for (u, v) in cycles])
             raise ValueError(out_str)
+
+    @classmethod
+    def from_lavaan(cls, string=None, filename=None):
+        """
+        Initializes a `DAG` instance using lavaan syntax.
+
+        Parameters
+        ----------
+        string: str (default: None)
+            A `lavaan` style multiline set of regression equation representing the model.
+            Refer http://lavaan.ugent.be/tutorial/syntax1.html for details.
+
+        filename: str (default: None)
+            The filename of the file containing the model in lavaan syntax.
+
+        Examples
+        --------
+        """
+        if filename:
+            with open(filename, "r") as f:
+                lavaan_str = f.readlines()
+        elif string:
+            lavaan_str = string.split("\n")
+        else:
+            raise ValueError("Either `filename` or `string` need to be specified")
+
+        return cls(lavaan_str=lavaan_str)
 
     def add_node(self, node, weight=None, latent=False):
         """

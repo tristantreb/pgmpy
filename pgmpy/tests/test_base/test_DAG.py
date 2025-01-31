@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import os
 import unittest
+import warnings
 
 import networkx as nx
 import numpy as np
@@ -10,8 +12,8 @@ import pgmpy.tests.help_functions as hf
 from pgmpy.base import DAG, PDAG
 from pgmpy.estimators import (
     BayesianEstimator,
-    MaximumLikelihoodEstimator,
     ExpectationMaximization,
+    MaximumLikelihoodEstimator,
 )
 from pgmpy.factors.discrete import TabularCPD
 
@@ -348,6 +350,74 @@ class TestDAGCreation(unittest.TestCase):
 
     def tearDown(self):
         del self.graph
+
+
+class TestDAGParser(unittest.TestCase):
+    def test_from_lavaan(self):
+        model_str = """# %load model.lav
+                       # measurement model
+                         ind60 =~ x1 + x2 + x3
+                         dem60 =~ y1 + y2 + y3 + y4
+                         dem65 =~ y5 + y6 + y7 + y8
+                       # regressions
+                         dem60 ~ ind60
+                         dem65 ~ ind60 + dem60
+                       """
+        model_from_str = DAG.from_lavaan(string=model_str)
+
+        with open("test_model.lav", "w") as f:
+            f.write(model_str)
+        model_from_file = DAG.from_lavaan(filename="test_model.lav")
+        os.remove("test_model.lav")
+
+        expected_edges = set(
+            [
+                ("ind60", "x1"),
+                ("ind60", "x2"),
+                ("ind60", "x3"),
+                ("ind60", "dem60"),
+                ("ind60", "dem65"),
+                ("dem60", "dem65"),
+                ("dem60", "y1"),
+                ("dem60", "y2"),
+                ("dem60", "y3"),
+                ("dem60", "y4"),
+                ("dem65", "y5"),
+                ("dem65", "y6"),
+                ("dem65", "y7"),
+                ("dem65", "y8"),
+            ]
+        )
+
+        expected_latents = set(["dem60", "dem65", "ind60"])
+        self.assertEqual(set(model_from_str.edges()), expected_edges)
+        self.assertEqual(set(model_from_file.edges()), expected_edges)
+        self.assertEqual(set(model_from_str.latents), expected_latents)
+        self.assertEqual(set(model_from_file.latents), expected_latents)
+
+    def test_from_lavaan_with_residual_correlation(self):
+        model_str = """# %load model_with_residual_correlation.lav
+                       # measurement model
+                         ind60 =~ x1 + x2 + x3
+                       # regressions
+                         dem60 ~ ind60
+                       # residual correlations
+                         y1 ~~ y5
+                       """
+
+        model_from_str = DAG.from_lavaan(string=model_str)
+        expected_edges = set(
+            [
+                ("ind60", "x1"),
+                ("ind60", "x2"),
+                ("ind60", "x3"),
+                ("ind60", "dem60"),
+            ]
+        )
+
+        expected_latents = set(["ind60"])
+        self.assertEqual(set(model_from_str.edges()), expected_edges)
+        self.assertEqual(set(model_from_str.latents), expected_latents)
 
 
 class TestDAGMoralization(unittest.TestCase):
