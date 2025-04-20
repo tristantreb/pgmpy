@@ -20,6 +20,9 @@ def copy(arr):
             return np.array(arr)
         elif isinstance(arr, (int, float)):
             return deepcopy(arr)
+        raise Exception(
+            f"Invalid backend ({config.get_backend()}) for data type {type(arr)}"
+        )
     else:
         if isinstance(arr, torch.Tensor):
             return arr.detach().clone()
