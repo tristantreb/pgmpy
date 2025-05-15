@@ -1278,3 +1278,17 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
         assert np.allclose(
             messages["['C', 'B'] -> C"], np.array([0.217, 0.783]), atol=1e-20
         )
+
+    def test_query_variable_with_precomputed_messages(self):
+        # Query A
+        res, messages = self.belief_propagation.query(["A"], get_messages=True)
+
+        # Query A with uniform computed messages on B
+        precomp_messages = {
+            "['B', 'A'] -> A": np.array([0.5, 0.5]),
+        }
+        res2, messages2 = self.belief_propagation.query(["A"], get_messages=True, precomp_messages=precomp_messages)
+
+        assert np.allclose(res2["A"].values, res["A"].values, atol=1e-20)
+        assert np.allclose(messages2["['B', 'A'] -> A"], messages["['B', 'A'] -> A"], atol=1e-20)
+        
