@@ -1,5 +1,18 @@
 #!/usr/bin/env python
-from pgmpy.estimators import StructureScore
+from pgmpy.estimators import (
+    AIC,
+    BIC,
+    K2,
+    AICCondGauss,
+    AICGauss,
+    BDeu,
+    BDs,
+    BICCondGauss,
+    BICGauss,
+    LogLikelihoodCondGauss,
+    LogLikelihoodGauss,
+    StructureScore,
+)
 
 
 class ScoreCache(StructureScore):
@@ -14,8 +27,8 @@ class ScoreCache(StructureScore):
          Has to be a decomposable score.
     data: pandas DataFrame instance
         DataFrame instance where each column represents one variable.
-        (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-        Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
     max_size: int (optional, default 10_000)
         The maximum number of elements allowed in the cache. When the limit is reached, the least recently used
         entries will be discarded.

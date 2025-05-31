@@ -1,9 +1,11 @@
-Structure Learning
-==================
+Causal Discovery / Structure Learning
+=====================================
 
 - :doc:`pc`
 - :doc:`hill`
+- :doc:`ges`
 - :doc:`tree`
+- :doc:`expert`
 - :doc:`mmhc`
 - :doc:`exhaustive`
 
@@ -13,6 +15,8 @@ Structure Learning
 
    pc.rst
    hill.rst
+   ges.rst
    tree.rst
+   expert.rst
    mmhc.rst
    exhaustive.rst

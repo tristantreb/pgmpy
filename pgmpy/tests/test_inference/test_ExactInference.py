@@ -3,16 +3,25 @@ import unittest
 
 import numpy as np
 import numpy.testing as np_test
+from pgmpy.utils import get_example_model
 
+from pgmpy.factors.continuous import LinearGaussianCPD
 from pgmpy.factors.discrete import DiscreteFactor, TabularCPD
 from pgmpy.inference import BeliefPropagation, VariableElimination
-from pgmpy.inference.ExactInference import BeliefPropagationWithMessageParsing
-from pgmpy.models import BayesianNetwork, FactorGraph, JunctionTree, MarkovNetwork
+from pgmpy.inference.ExactInference import BeliefPropagationWithMessagePassing
+from pgmpy.models import (
+    DiscreteBayesianNetwork,
+    DiscreteMarkovNetwork,
+    FactorGraph,
+    FunctionalBayesianNetwork,
+    JunctionTree,
+    LinearGaussianBayesianNetwork,
+)
 
 
 class TestVariableElimination(unittest.TestCase):
     def setUp(self):
-        self.bayesian_model = BayesianNetwork(
+        self.bayesian_model = DiscreteBayesianNetwork(
             [("A", "J"), ("R", "J"), ("J", "Q"), ("J", "L"), ("G", "L")]
         )
         cpd_a = TabularCPD("A", 2, values=[[0.2], [0.8]])
@@ -41,6 +50,15 @@ class TestVariableElimination(unittest.TestCase):
 
     # All the values that are used for comparison in the all the tests are
     # found using SAMIAM (assuming that it is correct ;))
+
+    def test_query_raises_for_empty_variables(self):
+        model = get_example_model("earthquake")
+        infer = VariableElimination(model)
+
+        with self.assertRaises(ValueError) as context:
+            infer.query(variables=[], evidence={"A": 1})
+
+        self.assertIn("must contain at least one variable", str(context.exception))
 
     def test_query_single_variable(self):
         for order in [
@@ -345,6 +363,20 @@ class TestVariableElimination(unittest.TestCase):
         )
         self.assertEqual(2, result_width)
 
+    def test_invalid_state_name(self):
+        """Test handling of invalid state names."""
+        with self.assertRaises(KeyError):
+            self.bayesian_inference.query(
+                variables=["J"], evidence={"A": -1}, show_progress=False
+            )
+
+    def test_invalid_variable_name(self):
+        """Test handling of invalid variable names."""
+        with self.assertRaises(ValueError):
+            self.bayesian_inference.query(
+                variables=["J"], evidence={"wrong_variable": 0}, show_progress=False
+            )
+
     def tearDown(self):
         del self.bayesian_inference
         del self.bayesian_model
@@ -352,7 +384,7 @@ class TestVariableElimination(unittest.TestCase):
 
 class TestSnowNetwork(unittest.TestCase):
     def setUp(self):
-        self.model = BayesianNetwork(
+        self.model = DiscreteBayesianNetwork(
             [
                 ("Snow", "Risk"),
                 ("Snow", "Traffic"),
@@ -482,114 +514,131 @@ class TestSnowNetwork(unittest.TestCase):
                 self.assertEqual(query_joint[var], query_expected[var])
 
     def test_virt_evidence(self):
-        virt_evidence = TabularCPD(
+        virt_evidence_cpd = TabularCPD(
             "Traffic", 2, [[0.3], [0.7]], state_names={"Traffic": ["normal", "slow"]}
         )
-        for algo in [VariableElimination, BeliefPropagation]:
-            infer = algo(self.model)
-            query1 = infer.query(
-                ["Snow"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            np_test.assert_array_almost_equal(query1.values, [0.45, 0.55])
+        virt_evidence_factor = DiscreteFactor(
+            ["Traffic"], [2], [0.3, 0.7], state_names={"Traffic": ["normal", "slow"]}
+        )
+        for virt_evidence in [virt_evidence_cpd, virt_evidence_factor]:
+            for algo in [VariableElimination, BeliefPropagation]:
+                infer = algo(self.model)
+                query1 = infer.query(
+                    ["Snow"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                np_test.assert_array_almost_equal(query1.values, [0.45, 0.55])
 
-            map1 = infer.map_query(
-                ["Snow"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            self.assertEqual(map1, {"Snow": "no"})
+                map1 = infer.map_query(
+                    ["Snow"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                self.assertEqual(map1, {"Snow": "no"})
 
-            query2 = infer.query(
-                ["Risk"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            np_test.assert_array_almost_equal(query2.values, [0.58, 0.42])
+                query2 = infer.query(
+                    ["Risk"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                np_test.assert_array_almost_equal(query2.values, [0.58, 0.42])
 
-            map2 = infer.map_query(
-                ["Risk"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            self.assertEqual(map2, {"Risk": "yes"})
+                map2 = infer.map_query(
+                    ["Risk"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                self.assertEqual(map2, {"Risk": "yes"})
 
-            query3 = infer.query(
-                ["Late"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            np_test.assert_array_almost_equal(query3.values, [0.61625, 0.38375])
+                query3 = infer.query(
+                    ["Late"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                np_test.assert_array_almost_equal(query3.values, [0.61625, 0.38375])
 
-            map3 = infer.map_query(
-                ["Late"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            self.assertEqual(map3, {"Late": "yes"})
+                map3 = infer.map_query(
+                    ["Late"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                self.assertEqual(map3, {"Late": "yes"})
 
-            query4 = infer.query(
-                ["Traffic"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            np_test.assert_array_almost_equal(query4.values, [0.34375, 0.65625])
+                query4 = infer.query(
+                    ["Traffic"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                np_test.assert_array_almost_equal(query4.values, [0.34375, 0.65625])
 
-            # TODO: State name should be returned here.
-            map4 = infer.map_query(
-                ["Traffic"], virtual_evidence=[virt_evidence], show_progress=False
-            )
-            self.assertTrue(map4 in [{"Traffic": "slow"}, {"Traffic": 1}])
+                # TODO: State name should be returned here.
+                map4 = infer.map_query(
+                    ["Traffic"], virtual_evidence=[virt_evidence], show_progress=False
+                )
+                self.assertTrue(map4 in [{"Traffic": "slow"}, {"Traffic": 1}])
 
-        virt_evidence1 = TabularCPD(
+        virt_evidence1_cpd = TabularCPD(
             "Risk", 2, [[0.7], [0.3]], state_names={"Risk": ["yes", "no"]}
         )
-        for algo in [VariableElimination, BeliefPropagation]:
-            infer = algo(self.model)
-            query1 = infer.query(
-                ["Snow"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            np_test.assert_array_almost_equal(query1.values, [0.52443609, 0.47556391])
+        virt_evidence1_factor = DiscreteFactor(
+            ["Risk"], [2], [0.7, 0.3], state_names={"Risk": ["yes", "no"]}
+        )
+        for virt_evidence in [virt_evidence_cpd, virt_evidence_factor]:
+            for virt_evidence1 in [virt_evidence1_cpd, virt_evidence1_factor]:
+                for algo in [VariableElimination, BeliefPropagation]:
+                    infer = algo(self.model)
+                    query1 = infer.query(
+                        ["Snow"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    np_test.assert_array_almost_equal(
+                        query1.values, [0.52443609, 0.47556391]
+                    )
 
-            map1 = infer.map_query(
-                ["Snow"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            self.assertEqual(map1, {"Snow": "yes"})
+                    map1 = infer.map_query(
+                        ["Snow"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    self.assertEqual(map1, {"Snow": "yes"})
 
-            query2 = infer.query(
-                ["Risk"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            np_test.assert_array_almost_equal(query2.values, [0.76315789, 0.23684211])
-            map2 = infer.map_query(
-                ["Risk"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            self.assertTrue(map2 in [{"Risk": 0}, {"Risk": "yes"}])
+                    query2 = infer.query(
+                        ["Risk"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    np_test.assert_array_almost_equal(
+                        query2.values, [0.76315789, 0.23684211]
+                    )
+                    map2 = infer.map_query(
+                        ["Risk"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    self.assertTrue(map2 in [{"Risk": 0}, {"Risk": "yes"}])
 
-            query3 = infer.query(
-                ["Traffic"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            np_test.assert_array_almost_equal(query3.values, [0.32730263, 0.67269737])
-            map3 = infer.map_query(
-                ["Traffic"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            self.assertTrue(map3 in [{"Traffic": "slow"}, {"Traffic": 1}])
+                    query3 = infer.query(
+                        ["Traffic"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    np_test.assert_array_almost_equal(
+                        query3.values, [0.32730263, 0.67269737]
+                    )
+                    map3 = infer.map_query(
+                        ["Traffic"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    self.assertTrue(map3 in [{"Traffic": "slow"}, {"Traffic": 1}])
 
-            query4 = infer.query(
-                ["Late"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            np_test.assert_array_almost_equal(query4.values, [0.66480263, 0.33519737])
-            map4 = infer.map_query(
-                ["Late"],
-                virtual_evidence=[virt_evidence, virt_evidence1],
-                show_progress=False,
-            )
-            self.assertEqual(map4, {"Late": "yes"})
+                    query4 = infer.query(
+                        ["Late"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    np_test.assert_array_almost_equal(
+                        query4.values, [0.66480263, 0.33519737]
+                    )
+                    map4 = infer.map_query(
+                        ["Late"],
+                        virtual_evidence=[virt_evidence, virt_evidence1],
+                        show_progress=False,
+                    )
+                    self.assertEqual(map4, {"Late": "yes"})
 
 
 class TestVariableEliminationDuplicatedFactors(unittest.TestCase):
     def setUp(self):
-        self.markov_model = MarkovNetwork([("A", "B"), ("A", "C")])
+        self.markov_model = DiscreteMarkovNetwork([("A", "B"), ("A", "C")])
         f1 = DiscreteFactor(
             variables=["A", "B"], cardinality=[2, 2], values=np.eye(2) * 2
         )
@@ -611,7 +660,7 @@ class TestVariableEliminationMarkov(unittest.TestCase):
     def setUp(self):
         # It is just a moralised version of the above Bayesian network so all the results are same. Only factors
         # are under consideration for inference so this should be fine.
-        self.markov_model = MarkovNetwork(
+        self.markov_model = DiscreteMarkovNetwork(
             [
                 ("A", "J"),
                 ("R", "J"),
@@ -806,7 +855,7 @@ class TestVariableEliminationMarkov(unittest.TestCase):
         self.assertEqual(2, result_width)
 
     def test_issue_1421(self):
-        model = BayesianNetwork([("X", "Y"), ("Z", "X"), ("W", "Y")])
+        model = DiscreteBayesianNetwork([("X", "Y"), ("Z", "X"), ("W", "Y")])
         cpd_z = TabularCPD(variable="Z", variable_card=2, values=[[0.5], [0.5]])
 
         cpd_x = TabularCPD(
@@ -849,7 +898,7 @@ class TestBeliefPropagation(unittest.TestCase):
         phi3 = DiscreteFactor(["C", "D"], [2, 2], range(4))
         self.junction_tree.add_factors(phi1, phi2, phi3)
 
-        self.bayesian_model = BayesianNetwork(
+        self.bayesian_model = DiscreteBayesianNetwork(
             [("A", "J"), ("R", "J"), ("J", "Q"), ("J", "L"), ("G", "L")]
         )
         cpd_a = TabularCPD("A", 2, values=[[0.2], [0.8]])
@@ -1061,7 +1110,7 @@ class TestBeliefPropagation(unittest.TestCase):
         )
 
     def test_issue_1048(self):
-        model = BayesianNetwork()
+        model = DiscreteBayesianNetwork()
 
         # Nodes
         parents = ["parent"]
@@ -1113,7 +1162,7 @@ class TestBeliefPropagation(unittest.TestCase):
         del self.bayesian_model
 
 
-class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
+class TestBeliefPropagationWithMessagePassing(unittest.TestCase):
     def setUp(self):
         self.factor_graph = FactorGraph()
         self.factor_graph.add_nodes_from(["A", "B", "C", "D"])
@@ -1141,7 +1190,7 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
             ]
         )
 
-        self.belief_propagation = BeliefPropagationWithMessageParsing(self.factor_graph)
+        self.belief_propagation = BeliefPropagationWithMessagePassing(self.factor_graph)
 
     def test_query_single_variable(self):
         res = self.belief_propagation.query(["C"])
@@ -1270,7 +1319,7 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
         )
         assert np.allclose(
             messages["['D', 'B'] -> B"],
-            np.array([0.33333333, 0.3333333, 0.33333333]),
+            np.array([0.33333333, 0.33333333, 0.33333333]),
             atol=1e-20,
         )
 
@@ -1292,3 +1341,28 @@ class TestBeliefPropagationWithMessageParsing(unittest.TestCase):
         assert np.allclose(res2["A"].values, res["A"].values, atol=1e-20)
         assert np.allclose(messages2["['B', 'A'] -> A"], messages["['B', 'A'] -> A"], atol=1e-20)
         
+
+class TestVariableEliminationLinearGaussianAndFunctionalBayesian(unittest.TestCase):
+    def setUp(self):
+        from pgmpy.utils import get_example_model
+
+        self.lgbm = get_example_model("ecoli70")
+        self.fbn = FunctionalBayesianNetwork([("X", "Y")])
+
+    def test_query_linear_gaussian(self):
+        inference = VariableElimination(self.lgbm)
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "Variable Elimination is not supported for LinearGaussianBayesianNetwork."
+            "Please use the 'predict' method of the LinearGaussianBayesianNetwork class instead.",
+        ):
+            inference.query(["Y"])
+
+    def test_query_functional_bayesian(self):
+        inference = VariableElimination(self.fbn)
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "Variable Elimination is not supported for FunctionalBayesianNetwork."
+            "Please use the 'predict' method of the FunctionalBayesianNetwork class instead.",
+        ):
+            inference.query(["Y"])

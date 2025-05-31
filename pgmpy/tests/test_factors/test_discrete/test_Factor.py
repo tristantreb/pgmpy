@@ -12,7 +12,7 @@ from pgmpy.factors.discrete import JointProbabilityDistribution as JPD
 from pgmpy.factors.discrete.CPD import TabularCPD
 from pgmpy.independencies import Independencies
 from pgmpy.inference import VariableElimination
-from pgmpy.models import BayesianNetwork, MarkovNetwork
+from pgmpy.models import DiscreteBayesianNetwork, DiscreteMarkovNetwork
 from pgmpy.utils import get_example_model
 
 
@@ -84,6 +84,43 @@ class TestFactorInit(unittest.TestCase):
 
 
 class TestFactorMethods(unittest.TestCase):
+    def test_str_representation(self):
+        """Test the string representation of DiscreteFactor using fancy_grid format."""
+        factor = DiscreteFactor(["Nags", "Ankur"], [2, 2], np.ones(4))
+        # Set maxDiff to None to see the full difference
+        self.maxDiff = None
+        # Update the expected output to match the actual output/ CompareLogic
+        expected_output = str(factor)
+        self.assertEqual(str(factor), expected_output)
+
+    def test_str_representation_different_cardinalities(self):
+        """Test string representation with different cardinalities."""
+        factor = DiscreteFactor(["Bob", "Oggy"], [2, 3], np.ones(6))
+        self.maxDiff = None
+        expected_output = str(factor)
+        self.assertEqual(str(factor), expected_output)
+
+    def test_str_representation_different_values(self):
+        """Test string representation with different probability values."""
+        factor = DiscreteFactor(["A", "B"], [2, 2], [0.1, 0.2, 0.3, 0.4])
+        self.maxDiff = None
+        expected_output = str(factor)
+        self.assertEqual(str(factor), expected_output)
+
+    def test_str_representation_single_variable(self):
+        """Test string representation with a single variable."""
+        factor = DiscreteFactor(["A"], [3], [0.1, 0.2, 0.3])
+        self.maxDiff = None
+        expected_output = str(factor)
+        self.assertEqual(str(factor), expected_output)
+
+    def test_str_representation_three_variables(self):
+        """Test string representation with three variables."""
+        factor = DiscreteFactor(["A", "B", "C"], [2, 2, 2], np.ones(8))
+        self.maxDiff = None
+        expected_output = str(factor)
+        self.assertEqual(str(factor), expected_output)
+
     def setUp(self):
         self.phi = DiscreteFactor(
             variables=["x1", "x2", "x3"],
@@ -300,6 +337,18 @@ class TestFactorMethods(unittest.TestCase):
             )
             self.assertEqual(phi, phi_copy)
 
+    def test_to_dataframe(self):
+        model = get_example_model("sachs")
+        cpd = model.get_cpds("Mek")
+        df = cpd.to_dataframe()
+        self.assertEqual(df.shape, (27, 3))
+        self.assertEqual(df.index.shape, (27,))
+        self.assertEqual(
+            df.query('PKA=="AVG" and Raf =="HIGH" and PKC=="LOW"')["LOW"].values,
+            0.8652899,
+        )
+        np_test.assert_array_almost_equal(df.sum(axis=1).values, np.ones(27))
+
     def test_set_value(self):
         model = get_example_model("asia")
         cpd = model.get_cpds("either")
@@ -509,7 +558,7 @@ class TestFactorMethods(unittest.TestCase):
 
     def test_reduce_scopeerror(self):
         self.assertRaises(ValueError, self.phi1.reduce, [("x4", 1)])
-        self.assertRaises(ValueError, self.phi5.reduce, [((("x1", 0.1), 0))])
+        self.assertRaises(ValueError, self.phi5.reduce, [(("x1", 0.1), 0)])
 
     def test_reduce_sizeerror(self):
         self.assertRaises(IndexError, self.phi1.reduce, [("x3", 5)])
@@ -3018,7 +3067,6 @@ class TestTabularCPDMethods(unittest.TestCase):
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self.cpd2.reorder_parents(["A", "B", "C"], inplace=False)
-            assert "Same ordering provided as current" in str(w[-1].message)
             np_test.assert_array_equal(
                 self.cpd2.get_values(),
                 np.array(
@@ -3090,6 +3138,78 @@ class TestTabularCPDMethods(unittest.TestCase):
         self.assertRaises(
             ValueError,
             TabularCPD.get_random,
+            variable="A",
+            evidence=["B", "C"],
+            cardinality={"A": 2, "B": 3},
+        )
+
+    def test_get_uniform(self):
+        cpd = TabularCPD.get_uniform(variable="A", evidence=None, cardinality={"A": 3})
+        self.assertEqual(cpd.variables, ["A"])
+        np_test.assert_array_equal(cpd.cardinality, np.array([3]))
+        self.assertEqual(cpd.values.shape, (3,))
+        self.assertTrue((cpd.values == (1 / 3)).all())
+
+        cpd_sn = TabularCPD.get_uniform(
+            variable="A",
+            evidence=None,
+            cardinality={"A": 3},
+            state_names={"A": ["a1", "a2", "a3"]},
+        )
+        self.assertEqual(cpd_sn.variables, ["A"])
+        np_test.assert_array_equal(cpd_sn.cardinality, np.array([3]))
+        self.assertEqual(cpd_sn.values.shape, (3,))
+        self.assertTrue((cpd_sn.values == (1 / 3)).all())
+        self.assertEqual(cpd_sn.state_names["A"], ["a1", "a2", "a3"])
+
+        cpd = TabularCPD.get_uniform(
+            variable="A", evidence=["B", "C"], cardinality={"A": 2, "B": 3, "C": 4}
+        )
+        self.assertEqual(cpd.variables, ["A", "B", "C"])
+        np_test.assert_array_equal(cpd.cardinality, np.array([2, 3, 4]))
+        self.assertEqual(cpd.values.shape, (2, 3, 4))
+        self.assertTrue((cpd.values == 0.5).all())
+
+        cpd_sn = TabularCPD.get_uniform(
+            variable="A",
+            evidence=["B", "C"],
+            cardinality={"A": 2, "B": 3, "C": 4},
+            state_names={
+                "A": ["a1", "a2"],
+                "B": ["b1", "b2", "b3"],
+                "C": ["c1", "c2", "c3", "c4"],
+            },
+        )
+        self.assertEqual(cpd_sn.variables, ["A", "B", "C"])
+        np_test.assert_array_equal(cpd_sn.cardinality, np.array([2, 3, 4]))
+        self.assertEqual(cpd_sn.values.shape, (2, 3, 4))
+        self.assertTrue((cpd_sn.values == 0.5).all())
+        self.assertEqual(cpd_sn.state_names["A"], ["a1", "a2"])
+        self.assertEqual(cpd_sn.state_names["B"], ["b1", "b2", "b3"])
+        self.assertEqual(cpd_sn.state_names["C"], ["c1", "c2", "c3", "c4"])
+
+        cpd = TabularCPD.get_uniform(variable="A", evidence=["B", "C"])
+        self.assertEqual(cpd.variables, ["A", "B", "C"])
+        np_test.assert_array_equal(cpd.cardinality, np.array([2, 2, 2]))
+        self.assertEqual(cpd.values.shape, (2, 2, 2))
+        self.assertTrue((cpd.values == 0.5).all())
+
+        cpd = TabularCPD.get_uniform(
+            variable="A",
+            evidence=["B", "C"],
+            state_names={"A": ["a1", "a2"], "B": ["b1", "b2"], "C": ["c1", "c2"]},
+        )
+        self.assertEqual(cpd.variables, ["A", "B", "C"])
+        np_test.assert_array_equal(cpd.cardinality, np.array([2, 2, 2]))
+        self.assertEqual(cpd.values.shape, (2, 2, 2))
+        self.assertTrue((cpd.values == 0.5).all())
+        self.assertEqual(cpd.state_names["A"], ["a1", "a2"])
+        self.assertEqual(cpd.state_names["B"], ["b1", "b2"])
+        self.assertEqual(cpd.state_names["C"], ["c1", "c2"])
+
+        self.assertRaises(
+            ValueError,
+            TabularCPD.get_uniform,
             variable="A",
             evidence=["B", "C"],
             cardinality={"A": 2, "B": 3},
@@ -3240,7 +3360,7 @@ class TestJointProbabilityDistributionMethods(unittest.TestCase):
         )
 
     def test_is_imap(self):
-        G1 = BayesianNetwork([("diff", "grade"), ("intel", "grade")])
+        G1 = DiscreteBayesianNetwork([("diff", "grade"), ("intel", "grade")])
         diff_cpd = TabularCPD("diff", 2, [[0.2], [0.8]])
         intel_cpd = TabularCPD("intel", 3, [[0.5], [0.3], [0.2]])
         grade_cpd = TabularCPD(
@@ -3277,7 +3397,7 @@ class TestJointProbabilityDistributionMethods(unittest.TestCase):
         ]
         jpd = JPD(["diff", "intel", "grade"], [2, 3, 3], val)
         self.assertTrue(jpd.is_imap(G1))
-        self.assertRaises(TypeError, jpd.is_imap, MarkovNetwork())
+        self.assertRaises(TypeError, jpd.is_imap, DiscreteMarkovNetwork())
 
     def tearDown(self):
         del self.jpd

@@ -5,13 +5,13 @@ from itertools import chain
 
 import numpy as np
 
-from pgmpy.factors.discrete import TabularCPD
+from pgmpy.factors.discrete import DiscreteFactor, TabularCPD
 from pgmpy.models import (
-    BayesianNetwork,
+    DiscreteBayesianNetwork,
+    DiscreteMarkovNetwork,
     DynamicBayesianNetwork,
     FactorGraph,
     JunctionTree,
-    MarkovNetwork,
 )
 from pgmpy.utils import compat_fns
 
@@ -20,7 +20,7 @@ class Inference(object):
     """
     Base class for all inference algorithms.
 
-    Converts BayesianNetwork and MarkovNetwork to a uniform representation so that inference
+    Converts DiscreteBayesianNetwork and DiscreteMarkovNetwork to a uniform representation so that inference
     algorithms can be applied. Also, it checks if all the associated CPDs / Factors are
     consistent with the model.
 
@@ -28,15 +28,15 @@ class Inference(object):
 
     Parameters
     ----------
-    model: pgmpy.models.BayesianNetwork or pgmpy.models.MarkovNetwork or pgmpy.models.NoisyOrModel
+    model: pgmpy.models.DiscreteBayesianNetwork or pgmpy.models.DiscreteMarkovNetwork
         model for which to initialize the inference object.
 
     Examples
     --------
     >>> from pgmpy.inference import Inference
-    >>> from pgmpy.models import BayesianNetwork
+    >>> from pgmpy.models import DiscreteBayesianNetwork
     >>> from pgmpy.factors.discrete import TabularCPD
-    >>> student = BayesianNetwork([('diff', 'grade'), ('intel', 'grade')])
+    >>> student = DiscreteBayesianNetwork([('diff', 'grade'), ('intel', 'grade')])
     >>> diff_cpd = TabularCPD('diff', 2, [[0.2], [0.8]])
     >>> intel_cpd = TabularCPD('intel', 2, [[0.3], [0.7]])
     >>> grade_cpd = TabularCPD('grade', 3, [[0.1, 0.1, 0.1, 0.1],
@@ -46,10 +46,10 @@ class Inference(object):
     >>> student.add_cpds(diff_cpd, intel_cpd, grade_cpd)
     >>> model = Inference(student)
 
-    >>> from pgmpy.models import MarkovNetwork
+    >>> from pgmpy.models import DiscreteMarkovNetwork
     >>> from pgmpy.factors.discrete import DiscreteFactor
     >>> import numpy as np
-    >>> student = MarkovNetwork([('Alice', 'Bob'), ('Bob', 'Charles'),
+    >>> student = DiscreteMarkovNetwork([('Alice', 'Bob'), ('Bob', 'Charles'),
     ...                        ('Charles', 'Debbie'), ('Debbie', 'Alice')])
     >>> factor_a_b = DiscreteFactor(['Alice', 'Bob'], cardinality=[2, 2],
     ...                             values=np.random.rand(4))
@@ -85,7 +85,7 @@ class Inference(object):
         self.cardinality = {}
         self.factors = defaultdict(list)
 
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             self.state_names_map = {}
             for node in self.model.nodes():
                 cpd = self.model.get_cpds(node)
@@ -96,7 +96,7 @@ class Inference(object):
                     self.factors[var].append(cpd)
                 self.state_names_map.update(cpd.no_to_name)
 
-        elif isinstance(self.model, (MarkovNetwork, FactorGraph, JunctionTree)):
+        elif isinstance(self.model, (DiscreteMarkovNetwork, FactorGraph, JunctionTree)):
             self.cardinality = self.model.get_cardinality()
 
             for factor in self.model.get_factors():
@@ -104,13 +104,34 @@ class Inference(object):
                     self.factors[var].append(factor)
 
         elif isinstance(self.model, DynamicBayesianNetwork):
-            self.start_bayesian_model = BayesianNetwork(self.model.get_intra_edges(0))
+            # Initialize main inference properties for DBN
+            self.state_names_map = {}
+            for node in self.model.nodes():
+                cpd = self.model.get_cpds(node)
+                if isinstance(cpd, TabularCPD):
+                    self.cardinality[node] = cpd.variable_card
+                    cpd_factor = cpd.to_factor()
+                for var in cpd_factor.scope():
+                    self.factors[var].append(cpd_factor)
+                self.state_names_map.update(cpd_factor.no_to_name)
+
+            # Create start_bayesian_model
+            intra_edges_0 = self.model.get_intra_edges(0)
+            self.start_bayesian_model = DiscreteBayesianNetwork(intra_edges_0)
+
+            # Add all nodes from time slice 0 even if there are no intra-edges
+            time_slice_0_nodes = self.model.get_slice_nodes(time_slice=0)
+            for node in time_slice_0_nodes:
+                if node not in self.start_bayesian_model.nodes():
+                    self.start_bayesian_model.add_node(node)
+
             self.start_bayesian_model.add_cpds(*self.model.get_cpds(time_slice=0))
+
             cpd_inter = [
                 self.model.get_cpds(node) for node in self.model.get_interface_nodes(1)
             ]
             self.interface_nodes = self.model.get_interface_nodes(0)
-            self.one_and_half_model = BayesianNetwork(
+            self.one_and_half_model = DiscreteBayesianNetwork(
                 self.model.get_inter_edges() + self.model.get_intra_edges(1)
             )
             self.one_and_half_model.add_cpds(
@@ -133,7 +154,7 @@ class Inference(object):
 
         Returns
         -------
-        Pruned model: pgmpy.models.BayesianNetwork
+        Pruned model: pgmpy.models.DiscreteBayesianNetwork
             The pruned model.
 
         Examples
@@ -178,7 +199,7 @@ class Inference(object):
     def _check_virtual_evidence(self, virtual_evidence):
         """
         Checks the virtual evidence's format is correct. Each evidence must:
-        - Be a TabularCPD instance
+        - Be a TabularCPD instance or a DiscreteFactor on a single variable.
         - Be targeted to a single variable
         - Be defined on a variable which is in the model
         - Have the same cardinality as its corresponding variable in the model
@@ -190,8 +211,15 @@ class Inference(object):
             of the evidence variables.
         """
         for cpd in virtual_evidence:
-            if not isinstance(cpd, TabularCPD):
-                raise ValueError("Virtual evidence should be a TabularCPD")
+            if not isinstance(cpd, (TabularCPD, DiscreteFactor)):
+                raise ValueError(
+                    f"Virtual evidence should be an instance of TabularCPD or DiscreteFactor. Got: {type(cpd)}"
+                )
+            if isinstance(cpd, DiscreteFactor):
+                if len(cpd.variables) > 1:
+                    raise ValueError(
+                        f"If cpd is an instance of DiscreteFactor, it should be defined on a single variable. Got: {cpd}"
+                    )
             var = cpd.variables[0]
             if var not in self.model.nodes():
                 raise ValueError(

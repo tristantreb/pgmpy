@@ -3,6 +3,7 @@ import copy
 import itertools
 import operator
 from functools import reduce
+from typing import Hashable, Optional
 
 import networkx as nx
 import numpy as np
@@ -20,10 +21,12 @@ from pgmpy.inference.EliminationOrder import (
     WeightedMinFill,
 )
 from pgmpy.models import (
-    BayesianNetwork,
+    DiscreteBayesianNetwork,
     DynamicBayesianNetwork,
     FactorGraph,
+    FunctionalBayesianNetwork,
     JunctionTree,
+    LinearGaussianBayesianNetwork,
 )
 from pgmpy.utils import compat_fns
 
@@ -116,13 +119,13 @@ class VariableElimination(Inference):
 
         # Step 2: If elimination order is None or a Markov model, return a random order.
         elif (elimination_order is None) or (
-            not isinstance(self.model, BayesianNetwork)
+            not isinstance(self.model, DiscreteBayesianNetwork)
         ):
             return to_eliminate
 
         # Step 3: If elimination order is a str, compute the order using the specified heuristic.
         elif isinstance(elimination_order, str) and isinstance(
-            self.model, BayesianNetwork
+            self.model, DiscreteBayesianNetwork
         ):
             heuristic_dict = {
                 "weightedminfill": WeightedMinFill,
@@ -220,13 +223,13 @@ class VariableElimination(Inference):
         final_distribution = [factor for factor, _ in final_distribution]
 
         if joint:
-            if isinstance(self.model, BayesianNetwork):
+            if isinstance(self.model, DiscreteBayesianNetwork):
                 return factor_product(*final_distribution).normalize(inplace=False)
             else:
                 return factor_product(*final_distribution)
         else:
             query_var_factor = {}
-            if isinstance(self.model, BayesianNetwork):
+            if isinstance(self.model, DiscreteBayesianNetwork):
                 for query_var in variables:
                     phi = factor_product(*final_distribution)
                     query_var_factor[query_var] = phi.marginalize(
@@ -242,9 +245,9 @@ class VariableElimination(Inference):
 
     def query(
         self,
-        variables,
-        evidence=None,
-        virtual_evidence=None,
+        variables: list[Hashable],
+        evidence: Optional[dict[Hashable, int]] = None,
+        virtual_evidence: Optional[list] = None,
         elimination_order="greedy",
         joint=True,
         show_progress=True,
@@ -280,17 +283,25 @@ class VariableElimination(Inference):
         Examples
         --------
         >>> from pgmpy.inference import VariableElimination
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> import numpy as np
         >>> import pandas as pd
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = VariableElimination(model)
         >>> phi_query = inference.query(['A', 'B'])
         """
         evidence = evidence if evidence is not None else dict()
+
+        if isinstance(
+            self.model, (LinearGaussianBayesianNetwork, FunctionalBayesianNetwork)
+        ):
+            raise NotImplementedError(
+                f"Variable Elimination is not supported for {self.model.__class__.__name__}."
+                f"Please use the 'predict' method of the {self.model.__class__.__name__} class instead."
+            )
 
         # Step 1: Parameter Checks
         common_vars = set(evidence if evidence is not None else []).intersection(
@@ -301,8 +312,15 @@ class VariableElimination(Inference):
                 f"Can't have the same variables in both `variables` and `evidence`. Found in both: {common_vars}"
             )
 
+        if not variables:
+            raise ValueError(
+                "The `variables` argument to query() must contain at least one variable."
+            )
+
         # Step 2: If virtual_evidence is provided, modify the network.
-        if isinstance(self.model, BayesianNetwork) and (virtual_evidence is not None):
+        if isinstance(self.model, DiscreteBayesianNetwork) and (
+            virtual_evidence is not None
+        ):
             self._virtual_evidence(virtual_evidence)
             virt_evidence = {"__" + cpd.variables[0]: 0 for cpd in virtual_evidence}
             return self.query(
@@ -315,7 +333,7 @@ class VariableElimination(Inference):
             )
 
         # Step 3: Prune the network based on variables and evidence.
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             model_reduced, evidence = self._prune_bayesian_model(variables, evidence)
             factors = model_reduced.cpds
         else:
@@ -356,7 +374,7 @@ class VariableElimination(Inference):
             evidence_var_set = set(evidence.keys())
             einsum_expr = []
 
-            if isinstance(self.model, BayesianNetwork):
+            if isinstance(self.model, DiscreteBayesianNetwork):
                 for index, phi in enumerate(factors):
                     if len(set(phi.variables) - evidence_var_set) > 0:
                         # if phi.variable not in evidence_var_set:
@@ -392,7 +410,8 @@ class VariableElimination(Inference):
             )
             if joint:
                 if isinstance(
-                    self.model, (BayesianNetwork, JunctionTree, DynamicBayesianNetwork)
+                    self.model,
+                    (DiscreteBayesianNetwork, JunctionTree, DynamicBayesianNetwork),
                 ):
                     return result.normalize(inplace=False)
                 else:
@@ -401,7 +420,8 @@ class VariableElimination(Inference):
                 result_dict = {}
                 all_vars = set(variables)
                 if isinstance(
-                    self.model, (BayesianNetwork, JunctionTree, DynamicBayesianNetwork)
+                    self.model,
+                    (DiscreteBayesianNetwork, JunctionTree, DynamicBayesianNetwork),
                 ):
                     for var in variables:
                         result_dict[var] = result.marginalize(
@@ -459,11 +479,11 @@ class VariableElimination(Inference):
         --------
         >>> import numpy as np
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.inference import VariableElimination
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = VariableElimination(model)
         >>> phi_query = inference.max_marginal(['A', 'B'])
@@ -479,7 +499,7 @@ class VariableElimination(Inference):
                 f"Can't have the same variables in both `variables` and `evidence`. Found in both: {common_vars}"
             )
 
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             model_reduced, evidence = self._prune_bayesian_model(variables, evidence)
         else:
             model_reduced = self.model
@@ -532,12 +552,12 @@ class VariableElimination(Inference):
         Examples
         --------
         >>> from pgmpy.inference import VariableElimination
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> import numpy as np
         >>> import pandas as pd
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = VariableElimination(model)
         >>> phi_query = inference.map_query(['A', 'B'])
@@ -552,7 +572,9 @@ class VariableElimination(Inference):
                 f"Can't have the same variables in both `variables` and `evidence`. Found in both: {common_vars}"
             )
 
-        if isinstance(self.model, BayesianNetwork) and (virtual_evidence is not None):
+        if isinstance(self.model, DiscreteBayesianNetwork) and (
+            virtual_evidence is not None
+        ):
             self._virtual_evidence(virtual_evidence)
             virt_evidence = {"__" + cpd.variables[0]: 0 for cpd in virtual_evidence}
             return self.map_query(
@@ -563,7 +585,7 @@ class VariableElimination(Inference):
                 show_progress=show_progress,
             )
 
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             model_reduced, evidence = self._prune_bayesian_model(variables, evidence)
         else:
             model_reduced = self.model
@@ -602,11 +624,11 @@ class VariableElimination(Inference):
         --------
         >>> import numpy as np
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.inference import VariableElimination
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = VariableElimination(model)
         >>> inference.induced_graph(['C', 'D', 'A', 'B', 'E'])
@@ -666,11 +688,11 @@ class VariableElimination(Inference):
         --------
         >>> import numpy as np
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.inference import VariableElimination
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = VariableElimination(model)
         >>> inference.induced_width(['C', 'D', 'A', 'B', 'E'])
@@ -690,7 +712,7 @@ class BeliefPropagation(Inference):
 
     Parameters
     ----------
-    model: BayesianNetwork, MarkovNetwork, FactorGraph, JunctionTree
+    model: DiscreteBayesianNetwork, DiscreteMarkovNetwork, FactorGraph, JunctionTree
         model for which inference is to performed
     """
 
@@ -733,8 +755,10 @@ class BeliefPropagation(Inference):
         ----------
         sending_clique: node (as the operation is on junction tree, node should be a tuple)
             Node sending the message
+
         receiving_clique: node (as the operation is on junction tree, node should be a tuple)
             Node receiving the message
+
         operation: str ('marginalize' | 'maximize')
             The operation to do for passing messages between nodes.
 
@@ -856,10 +880,10 @@ class BeliefPropagation(Inference):
 
         Examples
         --------
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.factors.discrete import TabularCPD
         >>> from pgmpy.inference import BeliefPropagation
-        >>> G = BayesianNetwork([('diff', 'grade'), ('intel', 'grade'),
+        >>> G = DiscreteBayesianNetwork([('diff', 'grade'), ('intel', 'grade'),
         ...                    ('intel', 'SAT'), ('grade', 'letter')])
         >>> diff_cpd = TabularCPD('diff', 2, [[0.2], [0.8]])
         >>> intel_cpd = TabularCPD('intel', 3, [[0.5], [0.3], [0.2]])
@@ -889,10 +913,10 @@ class BeliefPropagation(Inference):
 
         Examples
         --------
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.factors.discrete import TabularCPD
         >>> from pgmpy.inference import BeliefPropagation
-        >>> G = BayesianNetwork([('diff', 'grade'), ('intel', 'grade'),
+        >>> G = DiscreteBayesianNetwork([('diff', 'grade'), ('intel', 'grade'),
         ...                    ('intel', 'SAT'), ('grade', 'letter')])
         >>> diff_cpd = TabularCPD('diff', 2, [[0.2], [0.8]])
         >>> intel_cpd = TabularCPD('intel', 3, [[0.5], [0.3], [0.2]])
@@ -935,12 +959,12 @@ class BeliefPropagation(Inference):
         Examples
         --------
         >>> from pgmpy.inference import BeliefPropagation
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> import numpy as np
         >>> import pandas as pd
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 5)),
         ...                       columns=['A', 'B', 'C', 'D', 'E'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D'), ('B', 'E')])
         >>> model.fit(values)
         >>> inference = BeliefPropagation(model)
         >>> phi_query = inference.query(['A', 'B'])
@@ -1066,9 +1090,9 @@ class BeliefPropagation(Inference):
         Examples
         --------
         >>> from pgmpy.factors.discrete import TabularCPD
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.inference import BeliefPropagation
-        >>> bayesian_model = BayesianNetwork([('A', 'J'), ('R', 'J'), ('J', 'Q'),
+        >>> bayesian_model = DiscreteBayesianNetwork([('A', 'J'), ('R', 'J'), ('J', 'Q'),
         ...                                 ('J', 'L'), ('G', 'L')])
         >>> cpd_a = TabularCPD('A', 2, [[0.2], [0.8]])
         >>> cpd_r = TabularCPD('R', 2, [[0.4], [0.6]])
@@ -1103,7 +1127,9 @@ class BeliefPropagation(Inference):
             )
 
         # Step 2: If virtual_evidence is provided, modify model and evidence.
-        if isinstance(self.model, BayesianNetwork) and (virtual_evidence is not None):
+        if isinstance(self.model, DiscreteBayesianNetwork) and (
+            virtual_evidence is not None
+        ):
             self._virtual_evidence(virtual_evidence)
             virt_evidence = {"__" + cpd.variables[0]: 0 for cpd in virtual_evidence}
             return self.query(
@@ -1115,7 +1141,7 @@ class BeliefPropagation(Inference):
             )
 
         # Step 3: Do network pruning.
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             self.model, evidence = self._prune_bayesian_model(variables, evidence)
         self._initialize_structures()
 
@@ -1160,9 +1186,9 @@ class BeliefPropagation(Inference):
         Examples
         --------
         >>> from pgmpy.factors.discrete import TabularCPD
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.inference import BeliefPropagation
-        >>> bayesian_model = BayesianNetwork([('A', 'J'), ('R', 'J'), ('J', 'Q'),
+        >>> bayesian_model = DiscreteBayesianNetwork([('A', 'J'), ('R', 'J'), ('J', 'Q'),
         ...                                 ('J', 'L'), ('G', 'L')])
         >>> cpd_a = TabularCPD('A', 2, [[0.2], [0.8]])
         >>> cpd_r = TabularCPD('R', 2, [[0.4], [0.6]])
@@ -1202,7 +1228,9 @@ class BeliefPropagation(Inference):
         # Make a copy of the original model and then replace self.model with it later.
         orig_model = self.model.copy()
 
-        if isinstance(self.model, BayesianNetwork) and (virtual_evidence is not None):
+        if isinstance(self.model, DiscreteBayesianNetwork) and (
+            virtual_evidence is not None
+        ):
             self._virtual_evidence(virtual_evidence)
             virt_evidence = {"__" + cpd.variables[0]: 0 for cpd in virtual_evidence}
             return self.map_query(
@@ -1212,7 +1240,7 @@ class BeliefPropagation(Inference):
                 show_progress=show_progress,
             )
 
-        if isinstance(self.model, BayesianNetwork):
+        if isinstance(self.model, DiscreteBayesianNetwork):
             self.model, evidence = self._prune_bayesian_model(variables, evidence)
         self._initialize_structures()
 
@@ -1239,11 +1267,11 @@ class BeliefPropagation(Inference):
         return map_query_results
 
 
-class BeliefPropagationWithMessageParsing(Inference):
+class BeliefPropagationWithMessagePassing(Inference):
     """
     Class for performing efficient inference using Belief Propagation method on factor graphs with no loops.
 
-    The message-parsing algorithm recursively parses the factor graph to propagate the
+    The message-passing algorithm recursively parses the factor graph to propagate the
     model's beliefs to infer the posterior distribution of the queried variable. The recursion
     stops when reaching an observed variable or a unobserved root/leaf variable.
 
@@ -1270,7 +1298,7 @@ class BeliefPropagationWithMessageParsing(Inference):
 
     class _RecursiveMessageSchedulingQuery(object):
         """
-        Private class used in `BeliefPropagationWithMessageParsing.query()` to efficiently
+        Private class used in `BeliefPropagationWithMessagePassing.query()` to efficiently
         manage the message scheduling across the different queried variables, in a recursive way.
 
         Parameters
@@ -1456,9 +1484,10 @@ class BeliefPropagationWithMessageParsing(Inference):
         get_messages: bool (default: False)
             If True, returns all the messages that have been computed during the query
         precomp_messages: dict or None (default: None)
-            A dict of precomputed messages to use in the query. Use precomputed messages when
-            running multiple queries on the same graph with the same evidence. The dict should contain
-            entries in the form: {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array},
+            A dict of precomputed messages to use in the query. Precomputed messages act as predefined beliefs
+            associated to a variable. E.g., use them when running multiple queries on the same graph with the  
+            same evidence. The dict should contain entries in the form: 
+            {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array},
             or {"variable -> {pgmpy.factors.discrete.DiscreteFactor.variables}": np.array}.
 
         Returns
@@ -1515,7 +1544,6 @@ class BeliefPropagationWithMessageParsing(Inference):
         # Can't have the same variables in both `evidence` and `virtual_evidence`
         if evidence is not None and virtual_evidence is not None:
             self._check_virtual_evidence(virtual_evidence)
-
             ve_names = self._get_virtual_evidence_var_list(virtual_evidence)
             common_vars = set(evidence).intersection(set(ve_names))
             if common_vars:

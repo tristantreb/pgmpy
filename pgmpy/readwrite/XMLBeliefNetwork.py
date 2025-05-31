@@ -5,7 +5,7 @@ import networkx as nx
 import numpy as np
 
 from pgmpy.factors.discrete import TabularCPD
-from pgmpy.models import BayesianNetwork
+from pgmpy.models import DiscreteBayesianNetwork
 
 
 class XBNReader(object):
@@ -81,10 +81,13 @@ class XBNReader(object):
         >>> reader.get_static_properties()
         {'FORMAT': 'MSR DTAS XML', 'VERSION': '0.2', 'CREATOR': 'Microsoft Research DTAS'}
         """
-        return {
-            tags.tag: tags.get("VALUE")
-            for tags in self.bnmodel.find("STATICPROPERTIES")
-        }
+        if self.bnmodel.find("STATICPROPERTIES") is not None:
+            return {
+                tags.tag: tags.get("VALUE")
+                for tags in self.bnmodel.find("STATICPROPERTIES")
+            }
+        else:
+            return {}
 
     def get_variables(self):
         """
@@ -198,7 +201,7 @@ class XBNReader(object):
         """
         Returns an instance of Bayesian Model.
         """
-        model = BayesianNetwork()
+        model = DiscreteBayesianNetwork()
         model.add_nodes_from(self.variables)
         model.add_edges_from(self.edges)
         model.name = self.model_name
@@ -227,7 +230,7 @@ class XBNWriter(object):
 
     Parameters
     ----------
-    model: BayesianNetwork Instance
+    model: DiscreteBayesianNetwork Instance
         Model to write
     encoding: str(optional)
         Encoding for test data
@@ -244,7 +247,7 @@ class XBNWriter(object):
     """
 
     def __init__(self, model, encoding="utf-8", prettyprint=True):
-        if not isinstance(model, BayesianNetwork):
+        if not isinstance(model, DiscreteBayesianNetwork):
             raise TypeError("Model must be an instance of Bayesian Model.")
         self.model = model
 
@@ -368,17 +371,17 @@ class XBNWriter(object):
                 "VAR",
                 attrib={
                     "NAME": var,
-                    "TYPE": data[var]["TYPE"],
-                    "XPOS": data[var]["XPOS"],
-                    "YPOS": data[var]["YPOS"],
+                    "TYPE": data[var].get("TYPE", ""),
+                    "XPOS": data[var].get("XPOS", ""),
+                    "YPOS": data[var].get("YPOS", ""),
                 },
             )
             etree.SubElement(
                 variable,
                 "DESCRIPTION",
-                attrib={"DESCRIPTION": data[var]["DESCRIPTION"]},
+                attrib={"DESCRIPTION": data[var].get("DESCRIPTION", "")},
             )
-            for state in data[var]["STATES"]:
+            for state in self.model.states[var]:
                 etree.SubElement(variable, "STATENAME").text = state
 
     def set_edges(self, edge_list):
@@ -420,7 +423,9 @@ class XBNWriter(object):
             cpd_values = cpd.get_values().transpose()
             var = cpd.variable
             dist = etree.SubElement(
-                distributions, "DIST", attrib={"TYPE": self.model.nodes[var]["TYPE"]}
+                distributions,
+                "DIST",
+                attrib={"TYPE": self.model.nodes[var].get("TYPE", "")},
             )
             etree.SubElement(dist, "PRIVATE", attrib={"NAME": var})
             dpis = etree.SubElement(dist, "DPIS")
@@ -442,3 +447,23 @@ class XBNWriter(object):
                 etree.SubElement(dpis, "DPI").text = (
                     " " + " ".join(map(str, cpd_values[0])) + " "
                 )
+
+    def write_xbn(self, filename):
+        """
+        Writes the BIF data into a file
+
+        Parameters
+        ----------
+        filename : Name of the file
+
+        Example
+        -------
+        >>> from pgmpy.utils import get_example_model
+        >>> from pgmpy.readwrite import XBNReader, XBNWriter
+        >>> asia = get_example_model('asia')
+        >>> writer = XBNWriter(asia)
+        >>> writer.write_xbn(filename='asia.xbn')
+        """
+        writer = self.__str__()
+        with open(filename, "wb") as fout:
+            fout.write(writer)

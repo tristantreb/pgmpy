@@ -1,16 +1,35 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 from numbers import Number
+
 import numpy as np
 from sklearn.preprocessing import OrdinalEncoder
+
+from pgmpy.factors.base import factor_product
 from pgmpy.factors.discrete import DiscreteFactor
 
 
 class FactorDict(dict):
     @classmethod
     def from_dataframe(cls, df, marginals):
+        """Create a `FactorDict` from a given set of marginals.
+
+        Parameters
+        ----------
+        df: pandas DataFrame object
+
+        marginals: List[Tuple[str]]
+            List of Tuples containing the names of the marginals.
+
+        Returns
+        -------
+        Factor dictionary: FactorDict
+            FactorDict with each marginal's Factor representing the empirical
+                frequency of the marginal from the dataset.
+        """
         if df.isnull().values.any():
-            raise ValueError("df cannot contain None or np.NaN values.")
+            raise ValueError("df cannot contain None or np.nan values.")
 
         factor_dict = cls({})
         for marginal in marginals:
@@ -51,3 +70,6 @@ class FactorDict(dict):
 
     def dot(self, other):
         return sum((self[clique] * other[clique]).values.sum() for clique in self)
+
+    def product(self):
+        return factor_product(*self.get_factors())

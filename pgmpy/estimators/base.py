@@ -2,11 +2,13 @@
 
 from collections import defaultdict
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from pgmpy.factors import FactorDict
 from pgmpy.factors.discrete import DiscreteFactor
 from pgmpy.inference.ExactInference import BeliefPropagation
+from pgmpy.utils import preprocess_data
 
 
 class BaseEstimator(object):
@@ -18,8 +20,8 @@ class BaseEstimator(object):
     ----------
     data: pandas DataFrame object
         object where each column represents one variable.
-        (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-        Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
 
     state_names: dict (optional)
         A dict indicating, for each variable, the discrete set of states (or values)
@@ -28,7 +30,12 @@ class BaseEstimator(object):
     """
 
     def __init__(self, data=None, state_names=None):
-        self.data = data
+        if data is None:
+            self.data = None
+            self.dtypes = None
+        else:
+            self.data, self.dtypes = preprocess_data(data)
+
         # data can be None in the case when learning structure from
         # independence conditions. Look into PC.py.
         if self.data is not None:
@@ -124,7 +131,9 @@ class BaseEstimator(object):
         if not parents:
             # count how often each state of 'variable' occurred
             if weighted:
-                state_count_data = self.data.groupby([variable])["_weight"].sum()
+                state_count_data = self.data.groupby([variable], observed=True)[
+                    "_weight"
+                ].sum()
             else:
                 state_count_data = self.data.loc[:, variable].value_counts()
 
@@ -139,7 +148,7 @@ class BaseEstimator(object):
             # count how often each state of 'variable' occurred, conditional on parents' states
             if weighted:
                 state_count_data = (
-                    self.data.groupby([variable] + parents)["_weight"]
+                    self.data.groupby([variable] + parents, observed=True)["_weight"]
                     .sum()
                     .unstack(parents)
                 )
@@ -178,13 +187,13 @@ class ParameterEstimator(BaseEstimator):
 
     Parameters
     ----------
-    model: pgmpy.models.BayesianNetwork or pgmpy.models.MarkovNetwork or pgmpy.models.NoisyOrModel model
+    model: pgmpy.models.DiscreteBayesianNetwork or pgmpy.models.DiscreteMarkovNetwork model
         for which parameter estimation is to be done.
 
     data: pandas DataFrame object
         dataframe object with column names identical to the variable names of the model.
-        (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-        Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
 
     state_names: dict (optional)
         A dict indicating, for each variable, the discrete set of states (or values)
@@ -198,13 +207,13 @@ class ParameterEstimator(BaseEstimator):
 
         Parameters
         ----------
-        model: pgmpy.models.BayesianNetwork or pgmpy.models.MarkovNetwork or pgmpy.models.NoisyOrModel model
+        model: pgmpy.models.DiscreteBayesianNetwork or pgmpy.models.DiscreteMarkovNetwork model
             for which parameter estimation is to be done.
 
         data: pandas DataFrame object
             dataframe object with column names identical to the variable names of the model.
-            (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-            Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+            (If some values in the data are missing the data cells should be set to `numpy.nan`.
+            Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
 
         state_names: dict (optional)
             A dict indicating, for each variable, the discrete set of states (or values)
@@ -214,7 +223,7 @@ class ParameterEstimator(BaseEstimator):
         complete_samples_only: bool (optional, default `True`)
             Specifies how to deal with missing data, if present. If set to `True` all rows
             that contain `np.Nan` somewhere are ignored. If `False` then, for each variable,
-            every row where neither the variable nor its parents are `np.NaN` is used.
+            every row where neither the variable nor its parents are `np.nan` is used.
             This sets the behavior of the `state_count`-method.
         """
         self.model = model
@@ -240,9 +249,9 @@ class ParameterEstimator(BaseEstimator):
         Examples
         --------
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.estimators import ParameterEstimator
-        >>> model = BayesianNetwork([('A', 'C'), ('B', 'C')])
+        >>> model = DiscreteBayesianNetwork([('A', 'C'), ('B', 'C')])
         >>> data = pd.DataFrame(data={'A': ['a1', 'a1', 'a2'],
                                       'B': ['b1', 'b2', 'b1'],
                                       'C': ['c1', 'c1', 'c2']})
@@ -273,8 +282,8 @@ class StructureEstimator(BaseEstimator):
     ----------
     data: pandas DataFrame object
         dataframe object where each column represents one variable.
-        (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-        Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
 
     state_names: dict (optional)
         A dict indicating, for each variable, the discrete set of states (or values)
@@ -299,13 +308,13 @@ class MarginalEstimator(BaseEstimator):
 
     Parameters
     ----------
-    model: MarkovNetwork | FactorGraph | JunctionTree
-        A model to optimize, using Belief Propogation and an estimation method.
+    model: DiscreteMarkovNetwork | FactorGraph | JunctionTree
+        A model to optimize, using Belief Propagation and an estimation method.
 
     data: pandas DataFrame object
         dataframe object where each column represents one variable.
-        (If some values in the data are missing the data cells should be set to `numpy.NaN`.
-        Note that pandas converts each column containing `numpy.NaN`s to dtype `float`.)
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
 
     state_names: dict (optional)
         A dict indicating, for each variable, the discrete set of states (or values)
@@ -344,7 +353,7 @@ class MarginalEstimator(BaseEstimator):
                     break
             else:
                 raise ValueError(
-                    "Could not find a correponding clique for"
+                    "Could not find a corresponding clique for"
                     + f" marginal: {marginal_clique}"
                     + f" out of cliques: {clique_nodes}"
                 )

@@ -1,16 +1,18 @@
 import unittest
-import numpy as np
 
+import numpy as np
 import pandas as pd
+
+from pgmpy import config
 from pgmpy.estimators import MarginalEstimator
 from pgmpy.factors import FactorDict
 from pgmpy.factors.discrete import DiscreteFactor
-from pgmpy.models import FactorGraph, MarkovNetwork
+from pgmpy.models import DiscreteMarkovNetwork, FactorGraph
 
 
 class TestMarginalEstimator(unittest.TestCase):
     def setUp(self):
-        self.m1 = MarkovNetwork([("A", "B"), ("B", "C")])
+        self.m1 = DiscreteMarkovNetwork([("A", "B"), ("B", "C")])
         self.df = pd.DataFrame({"A": np.repeat([0, 1], 50)})
         self.m2 = FactorGraph()
         self.m2.add_node("A")
@@ -23,9 +25,9 @@ class TestMarginalEstimator(unittest.TestCase):
 
     def test_class_init(self):
         marginal_estimator = MarginalEstimator(
-            MarkovNetwork([("A", "B"), ("B", "C")]), pd.DataFrame()
+            DiscreteMarkovNetwork([("A", "B"), ("B", "C")]), pd.DataFrame()
         )
-        self.assert_(marginal_estimator)
+        self.assertTrue(marginal_estimator)
 
     def test_marginal_loss(self):
         marginal_estimator = MarginalEstimator(self.m2, data=self.df)
@@ -86,3 +88,18 @@ class TestMarginalEstimator(unittest.TestCase):
             marginals,
             [("D",)],
         )
+
+    def tearDown(self):
+        del self.m1
+        del self.m2
+        del self.df
+
+
+class TestMarginalEstimatorTorch(TestMarginalEstimator):
+    def setUp(self):
+        config.set_backend("torch")
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        config.set_backend("numpy")

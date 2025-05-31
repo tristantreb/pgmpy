@@ -6,10 +6,11 @@ from itertools import chain
 import numpy as np
 from joblib import Parallel, delayed
 
+from pgmpy.base import DAG
 from pgmpy.estimators import ParameterEstimator
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.global_vars import logger
-from pgmpy.models import BayesianNetwork
+from pgmpy.models import DiscreteBayesianNetwork
 
 
 class BayesianEstimator(ParameterEstimator):
@@ -19,14 +20,20 @@ class BayesianEstimator(ParameterEstimator):
     """
 
     def __init__(self, model, data, **kwargs):
-        if not isinstance(model, BayesianNetwork):
+        if not isinstance(model, (DAG, DiscreteBayesianNetwork)):
             raise NotImplementedError(
-                "Bayesian Parameter Estimation is only implemented for BayesianNetwork"
+                "Bayesian Parameter Estimation is only implemented for DAG or DiscreteBayesianNetwork"
             )
-        elif len(model.latents) != 0:
-            raise ValueError(
-                f"Bayesian Parameter Estimation works only on models with all observed variables. Found latent variables: {model.latents}"
-            )
+
+        else:
+            if len(model.latents) != 0:
+                raise ValueError(
+                    f"Bayesian Parameter Estimation works only on models with all observed variables. Found latent variables: {model.latents}"
+                )
+
+            elif isinstance(model, DAG):
+                model = DiscreteBayesianNetwork(model.edges())
+                model.add_nodes_from(model.nodes())
 
         super(BayesianEstimator, self).__init__(model, data, **kwargs)
 
@@ -60,13 +67,13 @@ class BayesianEstimator(ParameterEstimator):
                 regardless of the cardinality of the variable.
 
         equivalent_sample_size: int
-            Refer `priort_type` for more details.
+            Refer `prior_type` for more details.
 
         pseudo_counts: int (default: None)
-            Refer `priort_type` for more details.
+            Refer `prior_type` for more details.
 
         n_jobs: int (default: 1)
-            Number of jobs to run in parallel. Default: 1 uses all the processors.
+            Number of jobs to run in parallel. Default: 1.
             Using n_jobs > 1 for small models might be slower.
 
         weighted: bool
@@ -83,11 +90,11 @@ class BayesianEstimator(ParameterEstimator):
         --------
         >>> import numpy as np
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.estimators import BayesianEstimator
         >>> values = pd.DataFrame(np.random.randint(low=0, high=2, size=(1000, 4)),
         ...                       columns=['A', 'B', 'C', 'D'])
-        >>> model = BayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D')])
+        >>> model = DiscreteBayesianNetwork([('A', 'B'), ('C', 'B'), ('C', 'D')])
         >>> estimator = BayesianEstimator(model, values)
         >>> estimator.get_parameters(prior_type='BDeu', equivalent_sample_size=5)
         [<TabularCPD representing P(C:2) at 0x7f7b534251d0>,
@@ -168,10 +175,10 @@ class BayesianEstimator(ParameterEstimator):
         Examples
         --------
         >>> import pandas as pd
-        >>> from pgmpy.models import BayesianNetwork
+        >>> from pgmpy.models import DiscreteBayesianNetwork
         >>> from pgmpy.estimators import BayesianEstimator
         >>> data = pd.DataFrame(data={'A': [0, 0, 1], 'B': [0, 1, 0], 'C': [1, 1, 0]})
-        >>> model = BayesianNetwork([('A', 'C'), ('B', 'C')])
+        >>> model = DiscreteBayesianNetwork([('A', 'C'), ('B', 'C')])
         >>> estimator = BayesianEstimator(model, data)
         >>> cpd_C = estimator.estimate_cpd('C', prior_type="dirichlet",
         ...                                pseudo_counts=[[1, 1, 1, 1],

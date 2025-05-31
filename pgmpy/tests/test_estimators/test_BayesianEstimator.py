@@ -5,15 +5,19 @@ import pandas as pd
 from joblib.externals.loky import get_reusable_executor
 
 from pgmpy import config
+from pgmpy.base import DAG
 from pgmpy.estimators import BayesianEstimator
 from pgmpy.factors.discrete import TabularCPD
-from pgmpy.models import BayesianNetwork
+from pgmpy.models import DiscreteBayesianNetwork
 
 
 class TestBayesianEstimator(unittest.TestCase):
     def setUp(self):
-        self.m1 = BayesianNetwork([("A", "C"), ("B", "C")])
-        self.model_latent = BayesianNetwork([("A", "C"), ("B", "C")], latents=["C"])
+        self.m1 = DiscreteBayesianNetwork([("A", "C"), ("B", "C")])
+        self.model_latent = DiscreteBayesianNetwork(
+            [("A", "C"), ("B", "C")], latents=["C"]
+        )
+        self.dag_with_latents = DAG([("A", "B")], latents=["C"])
         self.d1 = pd.DataFrame(data={"A": [0, 0, 1], "B": [0, 1, 0], "C": [1, 1, 0]})
         self.d2 = pd.DataFrame(
             data={
@@ -30,6 +34,7 @@ class TestBayesianEstimator(unittest.TestCase):
 
     def test_error_latent_model(self):
         self.assertRaises(ValueError, BayesianEstimator, self.model_latent, self.d1)
+        self.assertRaises(ValueError, BayesianEstimator, self.dag_with_latents, self.d1)
 
     def test_estimate_cpd_dirichlet(self):
         cpd_A = self.est1.estimate_cpd(
@@ -80,12 +85,12 @@ class TestBayesianEstimator(unittest.TestCase):
         cpd_C_correct = TabularCPD(
             "C",
             2,
-            [[0.0, 0.0, 1.0, np.NaN], [1.0, 1.0, 0.0, np.NaN]],
+            [[0.0, 0.0, 1.0, np.nan], [1.0, 1.0, 0.0, np.nan]],
             evidence=["A", "B"],
             evidence_card=[2, 2],
             state_names={"A": [0, 1], "B": [0, 1], "C": [0, 1]},
         )
-        # manual comparison because np.NaN != np.NaN
+        # manual comparison because np.nan != np.nan
         self.assertTrue(
             (
                 (cpd_C.values == cpd_C_correct.values)
@@ -200,8 +205,10 @@ class TestBayesianEstimatorTorch(unittest.TestCase):
     def setUp(self):
         config.set_backend("torch")
 
-        self.m1 = BayesianNetwork([("A", "C"), ("B", "C")])
-        self.model_latent = BayesianNetwork([("A", "C"), ("B", "C")], latents=["C"])
+        self.m1 = DiscreteBayesianNetwork([("A", "C"), ("B", "C")])
+        self.model_latent = DiscreteBayesianNetwork(
+            [("A", "C"), ("B", "C")], latents=["C"]
+        )
         self.d1 = pd.DataFrame(data={"A": [0, 0, 1], "B": [0, 1, 0], "C": [1, 1, 0]})
         self.d2 = pd.DataFrame(
             data={
@@ -268,12 +275,12 @@ class TestBayesianEstimatorTorch(unittest.TestCase):
         cpd_C_correct = TabularCPD(
             "C",
             2,
-            [[0.0, 0.0, 1.0, np.NaN], [1.0, 1.0, 0.0, np.NaN]],
+            [[0.0, 0.0, 1.0, np.nan], [1.0, 1.0, 0.0, np.nan]],
             evidence=["A", "B"],
             evidence_card=[2, 2],
             state_names={"A": [0, 1], "B": [0, 1], "C": [0, 1]},
         )
-        # manual comparison because np.NaN != np.NaN
+        # manual comparison because np.nan != np.nan
         self.assertTrue(
             (
                 (cpd_C.values == cpd_C_correct.values)

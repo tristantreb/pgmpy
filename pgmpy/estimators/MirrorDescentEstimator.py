@@ -1,13 +1,49 @@
 #!/usr/bin/env python3
+from typing import Optional
+
 import numpy as np
-from tqdm.auto import tqdm
 from scipy.special import logsumexp
+from tqdm.auto import tqdm
 
 from pgmpy.estimators.base import MarginalEstimator
 from pgmpy.factors import FactorDict
+from pgmpy.utils import compat_fns
 
 
 class MirrorDescentEstimator(MarginalEstimator):
+    """
+    Class for estimation of a undirected graphical model based upon observed
+    marginals from a tabular dataset. Estimated parameters are found from an
+    entropic mirror descent algorithm for solving convex optimization problems
+    over the probability simplex.
+
+    Parameters
+    ----------
+    model: DiscreteMarkovNetwork | FactorGraph | JunctionTree
+        A model to optimize, using Belief Propagation and an estimation method.
+
+    data: pandas DataFrame object
+        dataframe object where each column represents one variable.
+        (If some values in the data are missing the data cells should be set to `numpy.nan`.
+        Note that pandas converts each column containing `numpy.nan`s to dtype `float`.)
+
+    state_names: dict (optional)
+        A dict indicating, for each variable, the discrete set of states (or values)
+        that the variable can take. If unspecified, the observed values in the data set
+        are taken to be the only possible states.
+
+    References
+    ----------
+    [1] McKenna, Ryan, Daniel Sheldon, and Gerome Miklau.
+        "Graphical-model based estimation and inference for differential  privacy." In Proceedings of the 36th International Conference on Machine Learning. 2019, Appendix A.1.
+        https://arxiv.org/abs/1901.09136.
+    [2] Beck, A. and Teboulle, M. Mirror descent and nonlinear projected subgradient methods for convex optimization. Operations Research Letters, 31(3):167–175, 2003
+        https://www.sciencedirect.com/science/article/abs/pii/S0167637702002316.
+    [3] Wainwright, M. J. and Jordan, M. I.
+        Graphical models, exponential families, and variational inference. Foundations and Trends in Machine Learning, 1(1-2):1–305, 2008, Section 3.6 Conjugate Duality: Maximum Likelihood and Maximum Entropy.
+        https://people.eecs.berkeley.edu/~wainwrig/Papers/WaiJor08_FTML.pdf
+    """
+
     def _calibrate(self, theta, n):
         """
         Wrapper for JunctionTree.calibrate that handles:
@@ -31,7 +67,7 @@ class MirrorDescentEstimator(MarginalEstimator):
         # Assign a new value for theta.
         self.belief_propagation.junction_tree.clique_beliefs = theta
 
-        # TODO: Currently, belief propogation operates in the original space.
+        # TODO: Currently, belief propagation operates in the original space.
         # To be compatible with this function and for better numerical conditioning,
         # allow calibration to happen in log-space.
         self.belief_propagation.calibrate()
@@ -45,15 +81,15 @@ class MirrorDescentEstimator(MarginalEstimator):
         log_z = logsumexp(mu[clique].values)
         for clique in cliques:
             mu[clique] += np.log(n) - log_z
-            np.exp(mu[clique].values, out=mu[clique].values)
+            mu[clique].values = compat_fns.exp(mu[clique].values)
         return mu
 
     def estimate(
         self,
-        marginals,
+        marginals: list[tuple[str, ...]],
         metric="L2",
         iterations=100,
-        stepsize=None,
+        stepsize: Optional[float] = None,
         show_progress=True,
     ):
         """
@@ -61,7 +97,7 @@ class MirrorDescentEstimator(MarginalEstimator):
 
         Parameters
         ----------
-        marginals: List[Tuple[str, ...]]
+        marginals: List[tuple[str, ...]]
             The names of the marginals to be estimated. These marginals must be present
             in the data passed to the `__init__()` method.
 

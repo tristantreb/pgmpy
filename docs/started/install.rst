@@ -11,7 +11,7 @@ For installation through anaconda, use the command:
 
 .. code-block:: bash
 
-        conda install -c ankurankan pgmpy
+        conda install -c conda-forge pgmpy
 
 For installing the latest `dev` branch from github, use the command:
 
@@ -25,7 +25,6 @@ Requirements
 
 If installing manually, the following non-optional dependencies needs to be installed:
 
-* Python 3.7+
 * numpy
 * scipy
 * scikit-learn

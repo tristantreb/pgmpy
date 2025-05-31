@@ -4,10 +4,10 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from networkx.algorithms.dag import descendants
-from pyparsing import OneOrMore, Optional, Suppress, Word, alphanums, nums
 
 from pgmpy.base import DAG
 from pgmpy.global_vars import logger
+from pgmpy.utils.parser import parse_lavaan
 
 
 class SEMGraph(DAG):
@@ -41,7 +41,8 @@ class SEMGraph(DAG):
 
     Examples
     --------
-    Defining a model (Union sentiment model[1]) without setting any paramaters.
+    Defining a model (Union sentiment model[1]) without setting any paramaters:
+
     >>> from pgmpy.models import SEMGraph
     >>> sem = SEMGraph(ebunch=[('deferenc', 'unionsen'), ('laboract', 'unionsen'),
     ...                        ('yrsmill', 'unionsen'), ('age', 'deferenc'),
@@ -51,7 +52,8 @@ class SEMGraph(DAG):
     ...                err_var={})
 
     Defining a model (Education [2]) with all the parameters set. For not setting any
-    parameter `np.NaN` can be explicitly passed.
+    parameter `np.nan` can be explicitly passed.
+
     >>> sem_edu = SEMGraph(ebunch=[('intelligence', 'academic', 0.8), ('intelligence', 'scale_1', 0.7),
     ...                            ('intelligence', 'scale_2', 0.64), ('intelligence', 'scale_3', 0.73),
     ...                            ('intelligence', 'scale_4', 0.82), ('academic', 'SAT_score', 0.98),
@@ -100,7 +102,7 @@ class SEMGraph(DAG):
             if len(t) == 3:
                 self.graph.add_edge(t[0], t[1], weight=t[2])
             elif len(t) == 2:
-                self.graph.add_edge(t[0], t[1], weight=np.NaN)
+                self.graph.add_edge(t[0], t[1], weight=np.nan)
             else:
                 raise ValueError(
                     f"Expected tuple length: 2 or 3. Got {t} of len {len(t)}"
@@ -114,7 +116,7 @@ class SEMGraph(DAG):
         self.err_graph.add_nodes_from(self.graph.nodes())
         for t in err_corr:
             if len(t) == 2:
-                self.err_graph.add_edge(t[0], t[1], weight=np.NaN)
+                self.err_graph.add_edge(t[0], t[1], weight=np.nan)
             elif len(t) == 3:
                 self.err_graph.add_edge(t[0], t[1], weight=t[2])
             else:
@@ -125,7 +127,7 @@ class SEMGraph(DAG):
         # Set the error variances
         for var in self.err_graph.nodes():
             self.err_graph.nodes[var]["weight"] = (
-                err_var[var] if var in err_var.keys() else np.NaN
+                err_var[var] if var in err_var.keys() else np.nan
             )
 
         self.full_graph_struct = self._get_full_graph_struct()
@@ -288,120 +290,6 @@ class SEMGraph(DAG):
             active_trails[start] = active_nodes
         return active_trails
 
-    def _iv_transformations(self, X, Y, scaling_indicators={}):
-        """
-        Transforms the graph structure of SEM so that the d-separation criterion is
-        applicable for finding IVs. The method transforms the graph for finding MIIV
-        for the estimation of X \rightarrow Y given the scaling indicator for all the
-        parent latent variables.
-
-        Parameters
-        ----------
-        X: node
-            The explantory variable.
-
-        Y: node
-            The dependent variable.
-
-        scaling_indicators: dict
-            Scaling indicator for each latent variable in the model.
-
-        Returns
-        -------
-        nx.DiGraph: The transformed full graph structure.
-
-        Examples
-        --------
-        >>> from pgmpy.models import SEMGraph
-        >>> model = SEMGraph(ebunch=[('xi1', 'eta1'), ('xi1', 'x1'), ('xi1', 'x2'),
-        ...                          ('eta1', 'y1'), ('eta1', 'y2')],
-        ...                  latents=['xi1', 'eta1'])
-        >>> model._iv_transformations('xi1', 'eta1',
-        ...                           scaling_indicators={'xi1': 'x1', 'eta1': 'y1'})
-        """
-        full_graph = self.full_graph_struct.copy()
-
-        if not (X, Y) in full_graph.edges():
-            raise ValueError(f"The edge from {X} -> {Y} doesn't exist in the graph")
-
-        if (X in self.observed) and (Y in self.observed):
-            full_graph.remove_edge(X, Y)
-            return full_graph, Y
-
-        elif Y in self.latents:
-            full_graph.add_edge("." + Y, scaling_indicators[Y])
-            dependent_var = scaling_indicators[Y]
-        else:
-            dependent_var = Y
-
-        for parent_y in self.graph.predecessors(Y):
-            # Remove edge even when the parent is observed ????
-            full_graph.remove_edge(parent_y, Y)
-            if parent_y in self.latents:
-                full_graph.add_edge("." + scaling_indicators[parent_y], dependent_var)
-
-        return full_graph, dependent_var
-
-    def get_ivs(self, X, Y, scaling_indicators={}):
-        """
-        Returns the Instrumental variables(IVs) for the relation X -> Y
-
-        Parameters
-        ----------
-        X: node
-            The variable name (observed or latent)
-
-        Y: node
-            The variable name (observed or latent)
-
-        scaling_indicators: dict (optional)
-            A dict representing which observed variable to use as scaling indicator for
-            the latent variables.
-            If not given the method automatically selects one of the measurement variables
-            at random as the scaling indicator.
-
-        Returns
-        -------
-        set: {str}
-            The set of Instrumental Variables for X -> Y.
-
-        Examples
-        --------
-        >>> from pgmpy.models import SEMGraph
-        >>> model = SEMGraph(ebunch=[('I', 'X'), ('X', 'Y')],
-        ...                  latents=[],
-        ...                  err_corr=[('X', 'Y')])
-        >>> model.get_ivs('X', 'Y')
-        {'I'}
-        """
-        if not scaling_indicators:
-            scaling_indicators = self.get_scaling_indicators()
-
-        if (X in scaling_indicators.keys()) and (scaling_indicators[X] == Y):
-            logger.warning(
-                f"{Y} is the scaling indicator of {X}. Please specify `scaling_indicators`"
-            )
-
-        transformed_graph, dependent_var = self._iv_transformations(
-            X, Y, scaling_indicators=scaling_indicators
-        )
-        if X in self.latents:
-            explanatory_var = scaling_indicators[X]
-        else:
-            explanatory_var = X
-
-        d_connected_x = self.active_trail_nodes(
-            [explanatory_var], struct=transformed_graph
-        )[explanatory_var]
-
-        # Condition on X to block any paths going through X.
-        d_connected_y = self.active_trail_nodes(
-            [dependent_var], avoid_nodes=[explanatory_var], struct=transformed_graph
-        )[dependent_var]
-
-        # Remove {X, Y} because they can't be IV for X -> Y
-        return d_connected_x - d_connected_y - {dependent_var, explanatory_var}
-
     def moralize(self, graph="full"):
         """
         TODO: This needs to go to a parent class.
@@ -495,73 +383,6 @@ class SEMGraph(DAG):
         else:
             return None
 
-    def get_conditional_ivs(self, X, Y, scaling_indicators={}):
-        """
-        Returns the conditional IVs for the relation X -> Y
-
-        Parameters
-        ----------
-        X: node
-            The observed variable's name
-
-        Y: node
-            The oberved variable's name
-
-        scaling_indicators: dict (optional)
-            A dict representing which observed variable to use as scaling indicator for
-            the latent variables.
-            If not provided, automatically finds scaling indicators by randomly selecting
-            one of the measurement variables of each latent variable.
-
-        Returns
-        -------
-        set: Set of 2-tuples representing tuple[0] is an IV for X -> Y given tuple[1].
-
-        References
-        ----------
-        .. [1] Van Der Zander, B., Textor, J., & Liskiewicz, M. (2015, June). Efficiently finding
-               conditional instruments for causal inference. In Twenty-Fourth International Joint
-               Conference on Artificial Intelligence.
-
-        Examples
-        --------
-        >>> from pgmpy.models import SEMGraph
-        >>> model = SEMGraph(ebunch=[('I', 'X'), ('X', 'Y'), ('W', 'I')],
-        ...                  latents=[],
-        ...                  err_corr=[('W', 'Y')])
-        >>> model.get_ivs('X', 'Y')
-        [('I', {'W'})]
-        """
-        if not scaling_indicators:
-            scaling_indicators = self.get_scaling_indicators()
-
-        if (X in scaling_indicators.keys()) and (scaling_indicators[X] == Y):
-            logger.warning(
-                f"{Y} is the scaling indicator of {X}. Please specify `scaling_indicators`"
-            )
-
-        transformed_graph, dependent_var = self._iv_transformations(
-            X, Y, scaling_indicators=scaling_indicators
-        )
-        if (X, Y) in transformed_graph.edges:
-            G_c = transformed_graph.remove_edge(X, Y)
-        else:
-            G_c = transformed_graph
-
-        instruments = []
-        for Z in self.observed - {X, Y}:
-            W = self._nearest_separator(G_c, Y, Z)
-            # Condition to check if W d-separates Y from Z
-            if (not W) or (W.intersection(descendants(G_c, Y))) or (X in W):
-                continue
-
-            # Condition to check if X d-connected to I after conditioning on W.
-            elif X in self.active_trail_nodes([Z], observed=W, struct=G_c)[Z]:
-                instruments.append((Z, W))
-            else:
-                continue
-        return instruments
-
     def to_lisrel(self):
         """
         Converts the model from a graphical representation to an equivalent algebraic
@@ -590,20 +411,20 @@ class SEMGraph(DAG):
         """
         nodelist = list(self.observed) + list(self.latents)
         graph_adj = nx.to_numpy_array(self.graph, nodelist=nodelist, weight=None)
-        graph_fixed = nx.to_numpy_array(self.graph, nodelist=nodelist, weight="weight")
+        graph_fixed = np.nan_to_num(
+            nx.to_numpy_array(self.graph, nodelist=nodelist, weight="weight")
+        )
 
         err_adj = nx.to_numpy_array(self.err_graph, nodelist=nodelist, weight=None)
         np.fill_diagonal(err_adj, 1.0)  # Variance exists for each error term.
-        err_fixed = nx.to_numpy_array(
-            self.err_graph, nodelist=nodelist, weight="weight"
+        err_fixed = np.nan_to_num(
+            nx.to_numpy_array(self.err_graph, nodelist=nodelist, weight="weight")
         )
 
         # Add the variance of the error terms.
         for index, node in enumerate(nodelist):
-            try:
-                err_fixed[index, index] = self.err_graph.nodes[node]["weight"]
-            except KeyError:
-                err_fixed[index, index] = 0.0
+            weight = self.err_graph.nodes[node]["weight"]
+            err_fixed[index, index] = 0.0 if np.isnan(weight) else weight
 
         wedge_y = np.zeros((len(self.observed), len(nodelist)), dtype=int)
         for index, obs_var in enumerate(self.observed):
@@ -1024,73 +845,9 @@ class SEM(SEMGraph):
         """
         if syntax.lower() == "lavaan":
             # Create a SEMGraph model using the lavaan str.
+            ebunch, latents, err_corr, err_var = parse_lavaan(kwargs["lavaan_str"])
 
-            # Step 1: Define the grammar for each type of string.
-            var = Word(alphanums)
-            reg_gram = (
-                OneOrMore(
-                    var.setResultsName("predictors", listAllMatches=True)
-                    + Optional(Suppress("+"))
-                )
-                + "~"
-                + OneOrMore(
-                    var.setResultsName("covariates", listAllMatches=True)
-                    + Optional(Suppress("+"))
-                )
-            )
-            intercept_gram = var("inter_var") + "~" + Word("1")
-            covar_gram = (
-                var("covar_var1")
-                + "~~"
-                + OneOrMore(
-                    var.setResultsName("covar_var2", listAllMatches=True)
-                    + Optional(Suppress("+"))
-                )
-            )
-            latent_gram = (
-                var("latent")
-                + "=~"
-                + OneOrMore(
-                    var.setResultsName("obs", listAllMatches=True)
-                    + Optional(Suppress("+"))
-                )
-            )
-
-            # Step 2: Preprocess string to lines
-            lines = kwargs["lavaan_str"]
-
-            # Step 3: Initialize arguments and fill them by parsing each line.
-            ebunch = []
-            latents = []
-            err_corr = []
-            err_var = []
-            for line in lines:
-                line = line.strip()
-                if (line != "") and (not line.startswith("#")):
-                    if intercept_gram.matches(line):
-                        continue
-                    elif reg_gram.matches(line):
-                        results = reg_gram.parseString(line, parseAll=True)
-                        for pred in results["predictors"]:
-                            ebunch.extend(
-                                [
-                                    (covariate, pred)
-                                    for covariate in results["covariates"]
-                                ]
-                            )
-                    elif covar_gram.matches(line):
-                        results = covar_gram.parseString(line, parseAll=True)
-                        for var in results["covar_var2"]:
-                            err_corr.append((results["covar_var1"], var))
-
-                    elif latent_gram.matches(line):
-                        results = latent_gram.parseString(line, parseAll=True)
-                        latents.append(results["latent"])
-                        ebunch.extend(
-                            [(results["latent"], obs) for obs in results["obs"]]
-                        )
-
-            # Step 4: Call the parent __init__ with the arguments
+            # Call the parent __init__ with the arguments
             super(SEM, self).__init__(ebunch=ebunch, latents=latents, err_corr=err_corr)
 
         elif syntax.lower() == "graph":
@@ -1180,6 +937,7 @@ class SEM(SEMGraph):
         Examples
         --------
         Defining a model (Union sentiment model[1]) without setting any paramaters.
+
         >>> from pgmpy.models import SEM
         >>> sem = SEM.from_graph(ebunch=[('deferenc', 'unionsen'), ('laboract', 'unionsen'),
         ...                              ('yrsmill', 'unionsen'), ('age', 'deferenc'),
@@ -1189,7 +947,8 @@ class SEM(SEMGraph):
         ...                      err_var={})
 
         Defining a model (Education [2]) with all the parameters set. For not setting any
-        parameter `np.NaN` can be explicitly passed.
+        parameter `np.nan` can be explicitly passed.
+
         >>> sem_edu = SEM.from_graph(ebunch=[('intelligence', 'academic', 0.8), ('intelligence', 'scale_1', 0.7),
         ...                                  ('intelligence', 'scale_2', 0.64), ('intelligence', 'scale_3', 0.73),
         ...                                  ('intelligence', 'scale_4', 0.82), ('academic', 'SAT_score', 0.98),

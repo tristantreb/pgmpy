@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
 
+import os
 import unittest
+import warnings
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 
 import pgmpy.tests.help_functions as hf
 from pgmpy.base import DAG, PDAG
+from pgmpy.estimators import (
+    BayesianEstimator,
+    ExpectationMaximization,
+    MaximumLikelihoodEstimator,
+)
+from pgmpy.estimators.CITests import pearsonr
+from pgmpy.factors.continuous import LinearGaussianCPD
+from pgmpy.factors.discrete import TabularCPD
+from pgmpy.models import DiscreteBayesianNetwork
+from pgmpy.models import LinearGaussianBayesianNetwork as LGBN
 
 
 class TestDAGCreation(unittest.TestCase):
@@ -30,6 +43,36 @@ class TestDAGCreation(unittest.TestCase):
             hf.recursive_sorted(self.graph.edges()), [["a", "b"], ["b", "c"]]
         )
         self.assertEqual(self.graph.latents, set(["b"]))
+
+    def test_class_init_with_adj_matrix_dict_of_dict(self):
+        adj = {"a": {"b": 4, "c": 3}, "b": {"c": 2}}
+        self.graph = DAG(adj, latents=set(["a"]))
+        self.assertEqual(self.graph.latents, set("a"))
+        self.assertListEqual(sorted(self.graph.nodes()), ["a", "b", "c"])
+        self.assertEqual(self.graph.adj["a"]["c"]["weight"], 3)
+
+    def test_class_init_with_adj_matrix_dict_of_list(self):
+        adj = {"a": ["b", "c"], "b": ["c"]}
+        self.graph = DAG(adj, latents=set(["a"]))
+        self.assertEqual(self.graph.latents, set("a"))
+        self.assertListEqual(sorted(self.graph.nodes()), ["a", "b", "c"])
+
+    def test_class_init_with_pd_adj_df(self):
+        df = pd.DataFrame([[0, 3], [0, 0]])
+        self.graph = DAG(df, latents=set([0]))
+        self.assertEqual(self.graph.latents, set([0]))
+        self.assertListEqual(sorted(self.graph.nodes()), [0, 1])
+        self.assertEqual(self.graph.adj[0][1]["weight"], {"weight": 3})  # None
+
+    def test_variable_name_contains_non_string_adj_matrix(self):
+        df = pd.DataFrame([[0, 3], [0, 0]])
+        self.graph = DAG(df)
+        self.assertEqual(self.graph._variable_name_contains_non_string(), (0, int))
+
+    def test_variable_name_contains_non_string_mixed_types(self):
+        self.graph = DAG([("a", "b"), ("b", "c"), ("a", 3.2)])
+        self.graph.nodes()
+        self.assertEqual(self.graph._variable_name_contains_non_string(), (3.2, float))
 
     def test_add_node_string(self):
         self.graph = DAG()
@@ -146,25 +189,15 @@ class TestDAGCreation(unittest.TestCase):
 
     def test_add_edge_weight(self):
         self.graph.add_edge("a", "b", weight=0.3)
-        if nx.__version__.startswith("1"):
-            self.assertEqual(self.graph.edge["a"]["b"]["weight"], 0.3)
-        else:
-            self.assertEqual(self.graph.adj["a"]["b"]["weight"], 0.3)
+        self.assertEqual(self.graph.adj["a"]["b"]["weight"], 0.3)
 
     def test_add_edges_from_weight(self):
         self.graph.add_edges_from([("b", "c"), ("c", "d")], weights=[0.5, 0.6])
-        if nx.__version__.startswith("1"):
-            self.assertEqual(self.graph.edge["b"]["c"]["weight"], 0.5)
-            self.assertEqual(self.graph.edge["c"]["d"]["weight"], 0.6)
+        self.assertEqual(self.graph.adj["b"]["c"]["weight"], 0.5)
+        self.assertEqual(self.graph.adj["c"]["d"]["weight"], 0.6)
 
-            self.graph.add_edges_from([("e", "f")])
-            self.assertEqual(self.graph.edge["e"]["f"]["weight"], None)
-        else:
-            self.assertEqual(self.graph.adj["b"]["c"]["weight"], 0.5)
-            self.assertEqual(self.graph.adj["c"]["d"]["weight"], 0.6)
-
-            self.graph.add_edges_from([("e", "f")])
-            self.assertEqual(self.graph.adj["e"]["f"]["weight"], None)
+        self.graph.add_edges_from([("e", "f")])
+        self.assertEqual(self.graph.adj["e"]["f"]["weight"], None)
 
     def test_update_node_parents_bm_constructor(self):
         self.graph = DAG([("a", "b"), ("b", "c")])
@@ -203,6 +236,109 @@ class TestDAGCreation(unittest.TestCase):
         anc_dag = dag.get_ancestral_graph(["A", "B"])
         self.assertEqual(set(anc_dag.edges()), set([("D", "A"), ("D", "B")]))
         self.assertRaises(ValueError, dag.get_ancestral_graph, ["A", "gibber"])
+
+    def test_to_pdag(self):
+        dag = DAG([("X", "Z"), ("Z", "W"), ("Y", "U")])
+        pdag = dag.to_pdag()
+
+        # Expected edges in the PDAG
+        expected_edges = {
+            ("Y", "U"),
+            ("U", "Y"),  # Undirected edge between Y and U
+            ("Z", "W"),
+            ("W", "Z"),  # Undirected edge between Z and W
+            ("X", "Z"),
+            ("Z", "X"),  # Undirected edge between X and Z
+        }
+
+        # Check that all expected edges are present
+        self.assertEqual(set(pdag.edges()), expected_edges)
+
+        # Check that the PDAG has the correct number of nodes
+        self.assertEqual(set(pdag.nodes()), {"X", "Y", "Z", "W", "U"})
+
+        # Check that there are no latent variables
+        self.assertEqual(pdag.latents, set())
+
+    def test_to_pdag_single_edge(self):
+        dag = DAG([("X", "Y")])
+        pdag = dag.to_pdag()
+
+        # Expected edges in the PDAG
+        expected_edges = {("X", "Y"), ("Y", "X")}
+        # Check that all expected edges are present
+        self.assertEqual(set(pdag.edges()), expected_edges)
+        # Check that the PDAG has the correct number of nodes
+        self.assertEqual(set(pdag.nodes()), {"X", "Y"})
+        # Check that there are no latent variables
+        self.assertEqual(pdag.latents, set())
+
+    def test_to_pdag_v_structure(self):
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        pdag = dag.to_pdag()
+
+        # Expected edges in the PDAG
+        expected_edges = {("X", "Y"), ("Z", "Y")}
+        # Check that all expected edges are present
+        self.assertEqual(set(pdag.edges()), expected_edges)
+        # Check that the PDAG has the correct number of nodes
+        self.assertEqual(set(pdag.nodes()), {"X", "Y", "Z"})
+        # Check that there are no latent variables
+        self.assertEqual(pdag.latents, set())
+
+    def test_to_pdag_multiple_edges_1(self):
+        dag = DAG(
+            [
+                ("Z1", "X"),
+                ("Z1", "Z3"),
+                ("Z2", "Z3"),
+                ("Z2", "Y"),
+                ("Z3", "X"),
+                ("Z3", "Y"),
+                ("X", "W"),
+                ("W", "Y"),
+            ]
+        )
+        pdag = dag.to_pdag()
+
+        # Expected edges in the PDAG
+        expected_edges = {
+            ("Z1", "Z3"),
+            ("Z1", "X"),
+            ("Z3", "X"),
+            ("Z3", "Y"),
+            ("Z2", "Z3"),
+            ("Z2", "Y"),
+            ("X", "W"),
+            ("W", "Y"),
+        }
+
+        # Check that all expected edges are present
+        self.assertEqual(set(pdag.edges()), expected_edges)
+        # Check that the PDAG has the correct number of nodes
+        self.assertEqual(set(pdag.nodes()), {"Z1", "Z2", "X", "Y", "Z3", "W"})
+        # Check that there are no latent variables
+        self.assertEqual(pdag.latents, set())
+
+    def test_to_pdag_multiple_edges_2(self):
+        dag = DAG([("X", "Y"), ("Z", "Y"), ("Z", "X")])
+        pdag = dag.to_pdag()
+
+        # Expected edges in the PDAG
+        expected_edges = {
+            ("X", "Y"),
+            ("Y", "X"),
+            ("Z", "Y"),
+            ("Y", "Z"),
+            ("Z", "X"),
+            ("X", "Z"),
+        }
+        # Check that all expected edges are present
+        self.assertEqual(set(pdag.edges()), expected_edges)
+        # Check that the PDAG has the correct number of nodes
+        self.assertEqual(set(pdag.nodes()), {"X", "Y", "Z"})
+        # Check that there are no latent variables
+        self.assertEqual(pdag.latents, set())
 
     def test_minimal_dseparator(self):
         # Without latent variables
@@ -264,18 +400,410 @@ class TestDAGCreation(unittest.TestCase):
             )
 
     def test_random_dag(self):
-        for i in range(100):
-            n_nodes = np.random.randint(low=2, high=100)
+        for i in range(10):
+            n_nodes = 8
             edge_prob = np.random.uniform()
             dag = DAG.get_random(n_nodes=n_nodes, edge_prob=edge_prob)
             self.assertEqual(len(dag.nodes()), n_nodes)
             self.assertTrue(nx.is_directed_acyclic_graph(dag))
             self.assertTrue(len(dag.latents) == 0)
 
+            node_names = [
+                "a",
+                "aa",
+                "aaa",
+                "aaaa",
+                "aaaaa",
+                "aaaaaa",
+                "aaaaaaa",
+                "aaaaaaaa",
+            ]
+            dag = DAG.get_random(
+                n_nodes=n_nodes, edge_prob=edge_prob, node_names=node_names
+            )
+            self.assertEqual(len(dag.nodes()), n_nodes)
+            self.assertEqual(sorted(dag.nodes()), node_names)
+            self.assertTrue(nx.is_directed_acyclic_graph(dag))
+            self.assertTrue(len(dag.latents) == 0)
+
         dag_latents = DAG.get_random(n_nodes=n_nodes, edge_prob=0.5, latents=True)
+
+    def test_dag_fit(self):
+        edge_list = [("A", "C"), ("B", "C")]
+        for model in [DAG(edge_list), DiscreteBayesianNetwork(edge_list)]:
+            data = pd.DataFrame(data={"A": [0, 0, 1], "B": [0, 1, 0], "C": [1, 1, 0]})
+            pseudo_counts = {
+                "A": [[9], [3]],
+                "B": [[9], [3]],
+                "C": [[9, 9, 9, 9], [3, 3, 3, 3]],
+            }
+
+            fitted_model_bayesian = model.fit(
+                data,
+                estimator=BayesianEstimator,
+                prior_type="dirichlet",
+                pseudo_counts=pseudo_counts,
+            )
+            self.assertEqual(
+                fitted_model_bayesian.get_cpds("B"),
+                TabularCPD("B", 2, [[11.0 / 15], [4.0 / 15]]),
+            )
+
+            fitted_model_mle = model.fit(data, estimator=MaximumLikelihoodEstimator)
+
+            self.assertEqual(
+                fitted_model_mle.get_cpds("B"),
+                TabularCPD("B", 2, [[2.0 / 3], [1.0 / 3]]),
+            )
+
+            fitted_model_em = model.fit(data, estimator=ExpectationMaximization)
+
+            self.assertEqual(
+                fitted_model_em.get_cpds("B"),
+                TabularCPD("B", 2, [[2.0 / 3], [1.0 / 3]]),
+            )
 
     def tearDown(self):
         del self.graph
+
+    def test_edge_strength_basic(self):
+        """Test basic functionality and numerical values using simulated data from LinearGaussianBN"""
+        # Create a linear Gaussian Bayesian network
+        linear_model = LGBN([("X", "Y"), ("Z", "Y")])
+
+        # Create CPDs with specific beta values
+        x_cpd = LinearGaussianCPD(variable="X", beta=[0], std=1)
+        y_cpd = LinearGaussianCPD(
+            variable="Y", beta=[0, 0.4, 0.6], std=1, evidence=["X", "Z"]
+        )
+        z_cpd = LinearGaussianCPD(variable="Z", beta=[0], std=1)
+
+        # Add CPDs to the model
+        linear_model.add_cpds(x_cpd, y_cpd, z_cpd)
+
+        # Simulate data from the model
+        data = linear_model.simulate(n_samples=int(1e4))
+
+        # Create DAG and compute edge strengths
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        strengths = dag.edge_strength(data)
+
+        # Test return type and structure
+        self.assertTrue(isinstance(strengths, dict))
+        self.assertEqual(set(strengths.keys()), {("X", "Y"), ("Z", "Y")})
+        self.assertTrue(all(isinstance(v, float) for v in strengths.values()))
+
+        # Test that edge strengths match squared Pearson correlation
+        xy_corr = pearsonr("X", "Y", ["Z"], data, boolean=False)
+        zy_corr = pearsonr("Z", "Y", ["X"], data, boolean=False)
+
+        self.assertAlmostEqual(strengths[("X", "Y")], xy_corr[0] ** 2, places=2)
+        self.assertAlmostEqual(strengths[("Z", "Y")], zy_corr[0] ** 2, places=2)
+
+    def test_edge_strength_specific_edge(self):
+        """Test computing strength for specific edge using simulated data"""
+        # Create a linear Gaussian Bayesian network
+        linear_model = LGBN([("X", "Y"), ("Z", "Y")])
+
+        # Create CPDs with specific beta values
+        x_cpd = LinearGaussianCPD(variable="X", beta=[0], std=1)
+        y_cpd = LinearGaussianCPD(
+            variable="Y", beta=[0, 0.4, 0.6], std=1, evidence=["X", "Z"]
+        )
+        z_cpd = LinearGaussianCPD(variable="Z", beta=[0], std=1)
+
+        # Add CPDs to the model
+        linear_model.add_cpds(x_cpd, y_cpd, z_cpd)
+
+        # Simulate data from the model
+        data = linear_model.simulate(n_samples=int(1e4))
+
+        # Create DAG and compute edge strength for specific edge
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        strength_xy = dag.edge_strength(data, edges=("X", "Y"))
+
+        # Test structure
+        self.assertEqual(set(strength_xy.keys()), {("X", "Y")})
+
+        # Test that edge strength matches squared Pearson correlation
+        xy_corr = pearsonr("X", "Y", ["Z"], data, boolean=False)[0]
+        self.assertAlmostEqual(strength_xy[("X", "Y")], xy_corr**2, places=2)
+
+    def test_edge_strength_multiple_edges(self):
+        """Test computing strength for multiple specific edges using simulated data"""
+        # Create a linear Gaussian Bayesian network
+        linear_model = LGBN([("X", "Y"), ("Z", "Y")])
+
+        # Create CPDs with specific beta values
+        x_cpd = LinearGaussianCPD(variable="X", beta=[0], std=1)
+        y_cpd = LinearGaussianCPD(
+            variable="Y", beta=[0, 0.4, 0.6], std=1, evidence=["X", "Z"]
+        )
+        z_cpd = LinearGaussianCPD(variable="Z", beta=[0], std=1)
+
+        # Add CPDs to the model
+        linear_model.add_cpds(x_cpd, y_cpd, z_cpd)
+
+        # Simulate data from the model
+        data = linear_model.simulate(n_samples=int(1e4))
+
+        # Create DAG and compute edge strengths for specific edges
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        strengths = dag.edge_strength(data, edges=[("X", "Y"), ("Z", "Y")])
+
+        # Test structure
+        self.assertEqual(set(strengths.keys()), {("X", "Y"), ("Z", "Y")})
+
+        # Test that edge strengths match squared Pearson correlation
+        xy_corr = pearsonr("X", "Y", ["Z"], data, boolean=False)[0]
+        zy_corr = pearsonr("Z", "Y", ["X"], data, boolean=False)[0]
+
+        self.assertAlmostEqual(strengths[("X", "Y")], xy_corr**2, places=2)
+        self.assertAlmostEqual(strengths[("Z", "Y")], zy_corr**2, places=2)
+
+    def test_edge_strength_stored_in_graph(self):
+        """Test that edge strengths are stored in the graph after computation using simulated data"""
+        # Create a linear Gaussian Bayesian network
+        linear_model = LGBN([("X", "Y"), ("Z", "Y")])
+
+        # Create CPDs with specific beta values
+        x_cpd = LinearGaussianCPD(variable="X", beta=[0], std=1)
+        y_cpd = LinearGaussianCPD(
+            variable="Y", beta=[0, 0.4, 0.6], std=1, evidence=["X", "Z"]
+        )
+        z_cpd = LinearGaussianCPD(variable="Z", beta=[0], std=1)
+
+        # Add CPDs to the model
+        linear_model.add_cpds(x_cpd, y_cpd, z_cpd)
+
+        # Simulate data from the model
+        data = linear_model.simulate(n_samples=int(1e4))
+
+        # Create DAG and compute edge strengths
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        strengths = dag.edge_strength(data)
+
+        # Verify strengths are stored in graph edges
+        self.assertIn("strength", dag.edges[("X", "Y")])
+        self.assertIn("strength", dag.edges[("Z", "Y")])
+
+        # Verify stored values match computed values
+        self.assertAlmostEqual(
+            dag.edges[("X", "Y")]["strength"], strengths[("X", "Y")], places=2
+        )
+        self.assertAlmostEqual(
+            dag.edges[("Z", "Y")]["strength"], strengths[("Z", "Y")], places=2
+        )
+
+        # Verify stored values match squared Pearson correlation
+        xy_corr = pearsonr("X", "Y", ["Z"], data, boolean=False)[0]
+        zy_corr = pearsonr("Z", "Y", ["X"], data, boolean=False)[0]
+
+        self.assertAlmostEqual(dag.edges[("X", "Y")]["strength"], xy_corr**2, places=2)
+        self.assertAlmostEqual(dag.edges[("Z", "Y")]["strength"], zy_corr**2, places=2)
+
+    def test_edge_strength_invalid_edges(self):
+        """Test error handling for invalid edges parameter formats"""
+        dag = DAG([("X", "Y"), ("Z", "Y")])
+        data = pd.DataFrame({"X": [0, 1, 0, 1], "Y": [1, 3, 0, 2], "Z": [1, 1, 0, 0]})
+
+        # Test invalid single edge format (3-tuple)
+        with self.assertRaises(ValueError) as context:
+            dag.edge_strength(data, edges=("X", "Y", "extra"))
+        self.assertIn(
+            "edges parameter must be either None, a 2-tuple (X, Y), or a list of 2-tuples",
+            str(context.exception),
+        )
+
+        # Test invalid list format (contains non-tuple)
+        with self.assertRaises(ValueError) as context:
+            dag.edge_strength(data, edges=[("X", "Y"), "invalid"])
+        self.assertIn(
+            "edges parameter must be either None, a 2-tuple (X, Y), or a list of 2-tuples",
+            str(context.exception),
+        )
+
+        # Test invalid list format (contains 3-tuple)
+        with self.assertRaises(ValueError) as context:
+            dag.edge_strength(data, edges=[("X", "Y"), ("Z", "Y", "extra")])
+        self.assertIn(
+            "edges parameter must be either None, a 2-tuple (X, Y), or a list of 2-tuples",
+            str(context.exception),
+        )
+
+    def test_edge_strength_skip_latent_edges(self):
+        """Test that edge_strength skips edges with latent variables and continues with others"""
+        # Create DAG with some latent variables
+        dag = DAG([("X", "Y"), ("Z", "Y"), ("L", "X"), ("W", "Z")], latents={"L"})
+
+        # Generate more samples with controlled relationships
+        np.random.seed(42)
+        n_samples = 100
+
+        # Generate data with some controlled relationships
+        data = pd.DataFrame(
+            {
+                "W": np.random.normal(0, 1, n_samples),
+                "L": np.random.normal(0, 1, n_samples),
+                "X": np.random.normal(0, 1, n_samples)
+                + 0.5 * np.random.normal(0, 1, n_samples),  # X depends on L
+                "Z": np.random.normal(0, 1, n_samples)
+                + 0.3 * np.random.normal(0, 1, n_samples),  # Z depends on W
+                "Y": np.random.normal(0, 1, n_samples)
+                + 0.4 * np.random.normal(0, 1, n_samples)
+                + 0.3 * np.random.normal(0, 1, n_samples),  # Y depends on X and Z
+            }
+        )
+
+        # Compute strengths for all edges
+        strengths = dag.edge_strength(data)
+
+        # Verify that edges involving latent variables are not in the results
+        self.assertNotIn(("L", "X"), strengths)
+
+        # Verify that other edges are computed
+        self.assertIn(("X", "Y"), strengths)
+        self.assertIn(("Z", "Y"), strengths)
+        self.assertIn(("W", "Z"), strengths)
+
+        # Verify that the computed strengths are valid
+        for edge in strengths:
+            self.assertTrue(0 <= strengths[edge] <= 1)
+
+        # Test with specific edges list
+        strengths = dag.edge_strength(data, edges=[("L", "X"), ("X", "Y"), ("W", "Z")])
+
+        # Verify that latent edge is skipped but others are computed
+        self.assertNotIn(("L", "X"), strengths)
+        self.assertIn(("X", "Y"), strengths)
+        self.assertIn(("W", "Z"), strengths)
+
+
+class TestDAGParser(unittest.TestCase):
+    def test_from_lavaan(self):
+        model_str = """# %load model.lav
+                       # measurement model
+                         ind60 =~ x1 + x2 + x3
+                         dem60 =~ y1 + y2 + y3 + y4
+                         dem65 =~ y5 + y6 + y7 + y8
+                       # regressions
+                         dem60 ~ ind60
+                         dem65 ~ ind60 + dem60
+                       """
+        model_from_str = DAG.from_lavaan(string=model_str)
+
+        with open("test_model.lav", "w") as f:
+            f.write(model_str)
+        model_from_file = DAG.from_lavaan(filename="test_model.lav")
+        os.remove("test_model.lav")
+
+        expected_edges = set(
+            [
+                ("ind60", "x1"),
+                ("ind60", "x2"),
+                ("ind60", "x3"),
+                ("ind60", "dem60"),
+                ("ind60", "dem65"),
+                ("dem60", "dem65"),
+                ("dem60", "y1"),
+                ("dem60", "y2"),
+                ("dem60", "y3"),
+                ("dem60", "y4"),
+                ("dem65", "y5"),
+                ("dem65", "y6"),
+                ("dem65", "y7"),
+                ("dem65", "y8"),
+            ]
+        )
+
+        expected_latents = set(["dem60", "dem65", "ind60"])
+        self.assertEqual(set(model_from_str.edges()), expected_edges)
+        self.assertEqual(set(model_from_file.edges()), expected_edges)
+        self.assertEqual(set(model_from_str.latents), expected_latents)
+        self.assertEqual(set(model_from_file.latents), expected_latents)
+
+    def test_from_lavaan_with_residual_correlation(self):
+        model_str = """# %load model_with_residual_correlation.lav
+                       # measurement model
+                         ind60 =~ x1 + x2 + x3
+                       # regressions
+                         dem60 ~ ind60
+                       # residual correlations
+                         y1 ~~ y5
+                       """
+
+        model_from_str = DAG.from_lavaan(string=model_str)
+        expected_edges = set(
+            [
+                ("ind60", "x1"),
+                ("ind60", "x2"),
+                ("ind60", "x3"),
+                ("ind60", "dem60"),
+            ]
+        )
+
+        expected_latents = set(["ind60"])
+        self.assertEqual(set(model_from_str.edges()), expected_edges)
+        self.assertEqual(set(model_from_str.latents), expected_latents)
+
+    def test_from_dagitty(self):
+        model_str = """
+            dag{
+                smoking "carry matches" [e] ; cancer [o]
+                smoking -> {"carry matches" -> cancer} smoking <-> coffee
+            }"""
+        model_from_str = DAG.from_dagitty(string=model_str)
+
+        with open("test_model.dagitty", "w") as f:
+            f.write(model_str)
+        model_from_file = DAG.from_dagitty(filename="test_model.dagitty")
+        os.remove("test_model.dagitty")
+
+        expected_edges = set(
+            [
+                ("smoking", "cancer"),
+                ("smoking", "carry matches"),
+                ("carry matches", "cancer"),
+                ("u_coffee_smoking", "coffee"),
+                ("u_coffee_smoking", "smoking"),
+            ]
+        )
+
+        expected_latents = set(["u_coffee_smoking"])
+        self.assertEqual(set(model_from_str.edges()), expected_edges)
+        self.assertEqual(set(model_from_file.edges()), expected_edges)
+        self.assertEqual(set(model_from_str.latents), expected_latents)
+        self.assertEqual(set(model_from_file.latents), expected_latents)
+
+    def test_from_daggitty_single_line_with_group_of_vars(self):
+        dag = DAG.from_dagitty(
+            'dag{ bb="0,0,1,1" X [l, pos="-1.228,-1.145"] X-> {Y Z}  Z ->A ->B <- C}'
+        )
+        self.assertEqual(
+            set(dag.edges()),
+            set([("X", "Z"), ("X", "Y"), ("Z", "A"), ("A", "B"), ("C", "B")]),
+        )
+        self.assertEqual(set(dag.latents), set(["X"]))
+
+    def test_from_dagitty_multiline_with_display_info(self):
+        dag = DAG.from_dagitty(
+            """
+                dag {
+                bb="-1.728,-4.67,2.587,4.156"
+                123 [pos="2.087,3.420"]
+                X.1 [pos="-1.228,-1.145"]
+                Y [pos="-0.725,-3.934"]
+                Z [latent, pos="-0.135,1.659"]
+                X.1 -> Y [pos="-0.300,-0.082"]
+                X.1 -> Z
+                Z -> 123
+                }
+        """
+        )
+        self.assertEqual(
+            set(dag.edges()), set([("X.1", "Y"), ("X.1", "Z"), ("Z", "123")])
+        )
+        self.assertEqual(set(dag.latents), set(["Z"]))
 
 
 class TestDAGMoralization(unittest.TestCase):
@@ -436,11 +964,88 @@ class TestPDAG(unittest.TestCase):
         self.assertEqual(pdag.undirected_edges, set())
         self.assertEqual(pdag.latents, set(["D"]))
 
-        # TODO: Fix the cycle issue.
-        # Test cycle
-        # directed_edges = [('A', 'C')]
-        # undirected_edges = [('A', 'B'), ('B', 'D'), ('D', 'C')]
-        # self.assertRaises(ValueError, PDAG, directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+    def test_all_neighrors(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertEqual(pdag.all_neighbors(node="A"), {"B", "C"})
+        self.assertEqual(pdag.all_neighbors(node="B"), {"A", "D"})
+        self.assertEqual(pdag.all_neighbors(node="C"), {"A", "D"})
+        self.assertEqual(pdag.all_neighbors(node="D"), {"B", "C"})
+
+    def test_directed_children(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertEqual(pdag.directed_children(node="A"), {"C"})
+        self.assertEqual(pdag.directed_children(node="B"), set())
+        self.assertEqual(pdag.directed_children(node="C"), set())
+
+    def test_directed_parents(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertEqual(pdag.directed_parents(node="A"), set())
+        self.assertEqual(pdag.directed_parents(node="B"), set())
+        self.assertEqual(pdag.directed_parents(node="C"), {"A", "D"})
+
+    def test_has_directed_edge(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertTrue(pdag.has_directed_edge("A", "C"))
+        self.assertTrue(pdag.has_directed_edge("D", "C"))
+        self.assertFalse(pdag.has_directed_edge("A", "B"))
+        self.assertFalse(pdag.has_directed_edge("B", "A"))
+
+    def test_has_undirected_edge(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertFalse(pdag.has_undirected_edge("A", "C"))
+        self.assertFalse(pdag.has_undirected_edge("D", "C"))
+        self.assertTrue(pdag.has_undirected_edge("A", "B"))
+        self.assertTrue(pdag.has_undirected_edge("B", "A"))
+
+    def test_undirected_neighbors(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        self.assertEqual(pdag.undirected_neighbors(node="A"), {"B"})
+        self.assertEqual(pdag.undirected_neighbors(node="B"), {"A", "D"})
+        self.assertEqual(pdag.undirected_neighbors(node="C"), set())
+        self.assertEqual(pdag.undirected_neighbors(node="D"), {"B"})
+
+    def test_orient_undirected_edge(self):
+        directed_edges = [("A", "C"), ("D", "C")]
+        undirected_edges = [("B", "A"), ("B", "D")]
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+
+        mod_pdag = pdag.orient_undirected_edge("B", "A", inplace=False)
+        self.assertEqual(
+            set(mod_pdag.edges()),
+            {("A", "C"), ("D", "C"), ("B", "A"), ("B", "D"), ("D", "B")},
+        )
+        self.assertEqual(mod_pdag.undirected_edges, {("B", "D")})
+        self.assertEqual(mod_pdag.directed_edges, {("A", "C"), ("D", "C"), ("B", "A")})
+
+        pdag.orient_undirected_edge("B", "A", inplace=True)
+        self.assertEqual(
+            set(pdag.edges()),
+            {("A", "C"), ("D", "C"), ("B", "A"), ("B", "D"), ("D", "B")},
+        )
+        self.assertEqual(pdag.undirected_edges, {("B", "D")})
+        self.assertEqual(pdag.directed_edges, {("A", "C"), ("D", "C"), ("B", "A")})
+
+        self.assertRaises(
+            ValueError, pdag.orient_undirected_edge, "B", "A", inplace=True
+        )
 
     def test_copy(self):
         pdag_copy = self.pdag_mix.copy()
@@ -541,3 +1146,160 @@ class TestPDAG(unittest.TestCase):
         expected_edges = {("B", "C"), ("C", "D"), ("A", "C")}
         self.assertEqual(expected_edges, set(dag.edges()))
         self.assertEqual(dag.latents, set(["A"]))
+
+    def test_pdag_to_cpdag(self):
+        pdag = PDAG(directed_ebunch=[("A", "B")], undirected_ebunch=[("B", "C")])
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(set(cpdag.edges()), {("A", "B"), ("B", "C")})
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B")], undirected_ebunch=[("B", "C"), ("C", "D")]
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(set(cpdag.edges()), {("A", "B"), ("B", "C"), ("C", "D")})
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B"), ("D", "C")], undirected_ebunch=[("B", "C")]
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(
+            set(cpdag.edges()), {("A", "B"), ("D", "C"), ("B", "C"), ("C", "B")}
+        )
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B"), ("D", "C"), ("D", "B")],
+            undirected_ebunch=[("B", "C")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(
+            set(cpdag.edges()), {("A", "B"), ("D", "C"), ("D", "B"), ("B", "C")}
+        )
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B"), ("B", "C")], undirected_ebunch=[("A", "C")]
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(set(cpdag.edges()), {("A", "B"), ("B", "C"), ("A", "C")})
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B"), ("B", "C"), ("D", "C")],
+            undirected_ebunch=[("A", "C")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(
+            set(cpdag.edges()), {("A", "B"), ("B", "C"), ("A", "C"), ("D", "C")}
+        )
+
+        # Examples taken from Perkovi\`c 2017.
+        pdag = PDAG(
+            directed_ebunch=[("V1", "X")],
+            undirected_ebunch=[("X", "V2"), ("V2", "Y"), ("X", "Y")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertEqual(
+            set(cpdag.edges()),
+            {("V1", "X"), ("X", "V2"), ("X", "Y"), ("V2", "Y"), ("Y", "V2")},
+        )
+
+        pdag = PDAG(
+            directed_ebunch=[("Y", "X")],
+            undirected_ebunch=[("V1", "X"), ("X", "V2"), ("V2", "Y")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertEqual(
+            set(cpdag.edges()),
+            {
+                ("X", "V1"),
+                ("Y", "X"),
+                ("X", "V2"),
+                ("V2", "X"),
+                ("V2", "Y"),
+                ("Y", "V2"),
+            },
+        )
+
+        # Examples from Bang 2024
+        pdag = PDAG(
+            directed_ebunch=[("B", "D"), ("C", "D")],
+            undirected_ebunch=[("A", "D"), ("A", "C")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True, debug=True)
+        self.assertEqual(
+            set(cpdag.edges()), {("B", "D"), ("D", "A"), ("C", "A"), ("C", "D")}
+        )
+
+        pdag = PDAG(
+            directed_ebunch=[("A", "B"), ("C", "B")],
+            undirected_ebunch=[("D", "B"), ("D", "A"), ("D", "C")],
+        )
+        cpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(
+            set(cpdag.edges()),
+            {
+                ("A", "B"),
+                ("C", "B"),
+                ("D", "B"),
+                ("D", "A"),
+                ("A", "D"),
+                ("D", "C"),
+                ("C", "D"),
+            },
+        )
+
+        undirected_edges = [("A", "C"), ("B", "C"), ("D", "C")]
+        directed_edges = [("B", "D"), ("D", "A")]
+
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+        mpdag = pdag.apply_meeks_rules(apply_r4=True)
+        self.assertSetEqual(
+            set(mpdag.edges()),
+            set(
+                [
+                    ("C", "A"),
+                    ("C", "B"),
+                    ("B", "C"),
+                    ("B", "D"),
+                    ("D", "A"),
+                    ("D", "C"),
+                    ("C", "D"),
+                ]
+            ),
+        )
+
+        pdag = PDAG(directed_ebunch=directed_edges, undirected_ebunch=undirected_edges)
+        pdag = pdag.apply_meeks_rules()
+        self.assertSetEqual(
+            set(pdag.edges()),
+            set(
+                [
+                    ("A", "C"),
+                    ("C", "A"),
+                    ("C", "B"),
+                    ("B", "C"),
+                    ("B", "D"),
+                    ("D", "A"),
+                    ("D", "C"),
+                    ("C", "D"),
+                ]
+            ),
+        )
+
+        pdag_inp = PDAG(
+            directed_ebunch=directed_edges, undirected_ebunch=undirected_edges
+        )
+        pdag_inp.apply_meeks_rules(inplace=True)
+        self.assertSetEqual(
+            set(pdag_inp.edges()),
+            set(
+                [
+                    ("A", "C"),
+                    ("C", "A"),
+                    ("C", "B"),
+                    ("B", "C"),
+                    ("B", "D"),
+                    ("D", "A"),
+                    ("D", "C"),
+                    ("C", "D"),
+                ]
+            ),
+        )

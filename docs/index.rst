@@ -10,41 +10,62 @@
 .. image:: https://github.com/pgmpy/pgmpy/actions/workflows/ci.yml/badge.svg?branch=dev
    :target: https://github.com/pgmpy/pgmpy/actions?query=branch%3Adev
 
-.. image:: https://codecov.io/gh/pgmpy/pgmpy/branch/dev/graph/badge.svg
-   :target: https://codecov.io/gh/pgmpy/pgmpy
-
-.. image:: https://api.codacy.com/project/badge/Grade/78a8256c90654c6892627f6d8bbcea14
-   :target: https://www.codacy.com/gh/pgmpy/pgmpy?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=pgmpy/pgmpy&amp;utm_campaign=Badge_Grade
-
 .. image:: https://img.shields.io/pypi/dm/pgmpy.svg
    :target: https://pypistats.org/packages/pgmpy
 
-.. image:: https://badges.gitter.im/Join%20Chat.svg
-   :target: https://gitter.im/pgmpy/pgmpy?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
+.. image:: https://img.shields.io/pypi/v/pgmpy?color=blue
+   :target: https://pypi.org/project/pgmpy/
 
+.. image:: https://img.shields.io/pypi/pyversions/pgmpy.svg?color=blue
+   :target: https://pypi.org/project/pgmpy/
+
+.. image:: https://img.shields.io/github/license/pgmpy/pgmpy
+   :target: https://github.com/pgmpy/pgmpy/blob/dev/LICENSE
+
+.. image:: http://img.shields.io/badge/benchmarked%20by-asv-blue.svg?style=flat
+   :target: http://pgmpy.org/pgmpy-benchmarks/
+
+.. |br| raw:: html
+
+   <br />
+   <br />
+
+
+.. image:: https://img.shields.io/badge/Discord-7289DA?style=for-the-badge&logo=discord&logoColor=white
+   :align: center
+   :target: https://discord.gg/DRkdKaumBs
 
 .. toctree::
    :maxdepth: 2
    :hidden:
 
    started/base.rst
-   base/base.rst
+   examples.rst
    models/base.rst
    factors/base.rst
-   exact_infer/base.rst
-   exact_infer/model_testing.rst
-   approx_infer/base.rst
+   infer/base.rst
+   causal_infer/base.rst
    param_estimator/base.rst
    structure_estimator/base.rst
    metrics/metrics.rst
    readwrite/base.rst
-   examples.rst
+   plotting.rst
    tutorial.rst
 
-pgmpy is a pure python implementation for Bayesian Networks with a focus on
-modularity and extensibility. Implementations of various alogrithms for Structure
-Learning, Parameter Estimation, Approximate (Sampling Based) and Exact
-inference, and Causal Inference are available.
+pgmpy is a Python package for causal inference and probabilistic inference
+using Directed Acyclic Graphs (DAGs) and Bayesian Networks with a focus on
+modularity and extensibility. Implementations of various algorithms for Causal
+Discovery (a.k.a, Structure Learning), Parameter Estimation, Approximate
+(Sampling Based) and Exact inference, and Causal Inference are available.
+
+|
+
+.. figure:: pgmpy_workflow.png
+   :alt: Possible Workflows in pgmpy for Directed Acyclic Graphs (DAGs) and Bayesian Networks (BNs).
+
+   Possible Workflows in pgmpy for Directed Acyclic Graphs (DAGs) and Bayesian Networks (BNs).
+
+|
 
 Supported Data Types
 ====================
@@ -53,30 +74,37 @@ Supported Data Types
    :header-rows: 1
 
    * -
-     - Structure Learning
+     - Causal Discovery
      - Parameter Estimation
      - Causal Inference
      - Probabilistic Inference
-   * - **Discrete**
+     - Simulations
+   * - **Categorical**
+     - Yes
      - Yes
      - Yes
      - Yes
      - Yes
    * - **Continuous**
-     - Yes (only PC)
-     - No
+     - Yes
+     - Yes
      - Yes (partial)
+     - Yes
+     - Yes
+   * - **Mixed**
+     - Yes
      - No
-   * - **Hybrid**
      - No
      - No
-     - No
-     - No
+     - Yes
    * - **Time Series**
      - No
      - Yes
      - Yes (ApproximateInference)
      - Yes
+     - Yes
+
+|
 
 Algorithms
 ==========
@@ -85,14 +113,36 @@ Algorithms
    :file: algorithms.csv
    :header-rows: 1
 
+|
 
-Example notebooks are also available at: https://github.com/pgmpy/pgmpy/tree/dev/examples
+Examples
+========
 
-Tutorial notebooks are also available at: https://github.com/pgmpy/pgmpy_notebook
+**Example notebooks:** :doc:`examples`
 
-Indices and tables
-==================
+**Tutorial notebooks:** :doc:`tutorial`
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+|
+
+Citation
+========
+If you use pgmpy in your scientific work, please consider citing us:
+
+.. code-block:: text
+
+   Ankur Ankan, & Johannes Textor (2024). pgmpy: A Python Toolkit for Bayesian Networks. Journal of Machine Learning Research, 25(265), 1–8.
+
+Bibtex:
+
+.. code-block:: text
+
+   @article{Ankan2024,
+     author  = {Ankur Ankan and Johannes Textor},
+     title   = {pgmpy: A Python Toolkit for Bayesian Networks},
+     journal = {Journal of Machine Learning Research},
+     year    = {2024},
+     volume  = {25},
+     number  = {265},
+     pages   = {1--8},
+     url     = {http://jmlr.org/papers/v25/23-0487.html}
+   }
