@@ -3,7 +3,6 @@ import unittest
 
 import numpy as np
 import numpy.testing as np_test
-from pgmpy.utils import get_example_model
 
 from pgmpy.factors.continuous import LinearGaussianCPD
 from pgmpy.factors.discrete import DiscreteFactor, TabularCPD
@@ -17,6 +16,7 @@ from pgmpy.models import (
     JunctionTree,
     LinearGaussianBayesianNetwork,
 )
+from pgmpy.utils import get_example_model
 
 
 class TestVariableElimination(unittest.TestCase):
@@ -1336,11 +1336,15 @@ class TestBeliefPropagationWithMessagePassing(unittest.TestCase):
         precomp_messages = {
             "['B', 'A'] -> A": np.array([0.5, 0.5]),
         }
-        res2, messages2 = self.belief_propagation.query(["A"], get_messages=True, precomp_messages=precomp_messages)
+        res2, messages2 = self.belief_propagation.query(
+            ["A"], get_messages=True, precomp_messages=precomp_messages
+        )
 
         assert np.allclose(res2["A"].values, res["A"].values, atol=1e-20)
-        assert np.allclose(messages2["['B', 'A'] -> A"], messages["['B', 'A'] -> A"], atol=1e-20)
-        
+        assert np.allclose(
+            messages2["['B', 'A'] -> A"], messages["['B', 'A'] -> A"], atol=1e-20
+        )
+
 
 class TestVariableEliminationLinearGaussianAndFunctionalBayesian(unittest.TestCase):
     def setUp(self):

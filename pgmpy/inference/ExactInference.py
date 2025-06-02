@@ -1485,8 +1485,8 @@ class BeliefPropagationWithMessagePassing(Inference):
             If True, returns all the messages that have been computed during the query
         precomp_messages: dict or None (default: None)
             A dict of precomputed messages to use in the query. Precomputed messages act as predefined beliefs
-            associated to a variable. E.g., use them when running multiple queries on the same graph with the  
-            same evidence. The dict should contain entries in the form: 
+            associated to a variable. E.g., use them when running multiple queries on the same graph with the
+            same evidence. The dict should contain entries in the form:
             {"{pgmpy.factors.discrete.DiscreteFactor.variables} -> variable": np.array},
             or {"variable -> {pgmpy.factors.discrete.DiscreteFactor.variables}": np.array}.
 
