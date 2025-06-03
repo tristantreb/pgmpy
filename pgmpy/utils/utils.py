@@ -348,7 +348,8 @@ def llm_pairwise_orient(
         1. <A> causes <B>
         2. <B> causes <A>
 
-        Return a single number (1 or 2) as your answer. I do not need the reasoning behind it. Do not add any formatting in the answer.
+        Return a single number (1 or 2) as your answer. I do not need the reasoning behind it.
+        Do not add any formatting in the answer.
         """
     response = completion(
         model=llm_model, messages=[{"role": "user", "content": prompt}]
@@ -441,3 +442,43 @@ def preprocess_data(df):
         f"inferred from data: \n {dtypes}"
     )
     return (df, dtypes)
+
+
+def get_dataset_type(data: pd.DataFrame) -> str:
+    """
+    Returns continuous, discrete or mixed depending on the type of variable
+    data in the given dataset.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame to analyze
+
+    Returns
+    -------
+    str
+        `continuous`, `discrete` or `mixed`.
+    """
+
+    def heuristic_categorical_detection(df):
+        # credit: https://stackoverflow.com/a/35827646
+        for var in df.columns:
+            if 1.0 * df[var].nunique() / df[var].count() < 0.1:
+                logger.warning(
+                    "Data is likely categorical, but using numerical values. "
+                    "Please set the dtype as `categorical` in pandas dataframe if "
+                    "that's the case, otherwise ignore this warning."
+                )
+                break
+
+    df, dtypes = preprocess_data(data)
+    dtypes_set = set(dtypes.values())
+
+    if len(dtypes_set) == 1:
+        if "N" in dtypes_set:
+            heuristic_categorical_detection(df)
+            return "continuous"
+        elif "C" in dtypes_set:
+            return "discrete"
+    heuristic_categorical_detection(df)
+    return "mixed"
