@@ -3,10 +3,12 @@ import math
 import os
 
 import networkx as nx
+from opt_einsum import contract
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from pgmpy import config
 from pgmpy.inference import Inference
 from pgmpy.utils import _check_1d_array_object, _check_length_equal, compat_fns
 
@@ -92,7 +94,7 @@ class BayesianModelInference(Inference):
             slice_[index] = sc[i]
 
         reduced_values = variable_cpd.values[tuple(slice_)]
-        marg_values = compat_fns.einsum(reduced_values, range(reduced_values.ndim), [0])
+        marg_values = contract(reduced_values, range(reduced_values.ndim), [0])
         return marg_values / marg_values.sum()
 
     def pre_compute_reduce_maps(self, variable, evidence=None, state_combinations=None):
