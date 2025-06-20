@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -23,7 +25,7 @@ jobs:
       - name: Install linting tools
         run: |
           pip install --upgrade pip
-          pip install black blackdoc
+          pip install black blackdoc flake8
 
       - name: Check code formatting
         run: |
@@ -34,3 +36,21 @@ jobs:
         run: |
           blackdoc --diff pgmpy
           blackdoc --check pgmpy
+
+      - name: Fetch dev branch
+        run: git fetch origin dev:dev
+
+      - name: Get modified Python files
+        id: files
+        run: |
+          FILES=$(git diff --name-only dev...HEAD | grep '\.py$' | paste -sd' ' -)
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Flake8
+        run: |
+          if [ -n "${{ steps.files.outputs.files }}" ]; then
+            echo "Running flake8 on: ${{ steps.files.outputs.files }}"
+            flake8 --config=.flake8 ${{ steps.files.outputs.files }}
+          else
+            echo "No Python files changed."
+          fi
