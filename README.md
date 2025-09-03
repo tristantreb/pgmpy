@@ -4,8 +4,6 @@
 pgmpy is a Python library for causal and probabilistic modeling using graphical models. It provides a uniform API for building, learning, and analyzing models such as Bayesian Networks, Dynamic Bayesian Networks, Directed Acyclic Graphs (DAGs), and Structural Equation Models(SEMs). By integrating tools from both probabilistic inference and causal inference, pgmpy enables users to seamlessly transition between predictive and interventional analyses.
 </div>
 
-<br/>
-<br/>
 
 |  | **[Documentation](https://pgmpy.org/)** · **[Examples](https://pgmpy.org/examples.html)** . **[Tutorials](https://github.com/pgmpy/pgmpy_tutorials)** |
 |---|---|
