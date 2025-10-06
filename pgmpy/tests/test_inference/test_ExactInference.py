@@ -3,8 +3,9 @@ import unittest
 
 import numpy as np
 import numpy.testing as np_test
+from skbase.utils.dependencies import _check_soft_dependencies
 
-from pgmpy.factors.continuous import LinearGaussianCPD
+from pgmpy import config
 from pgmpy.factors.discrete import DiscreteFactor, TabularCPD
 from pgmpy.inference import BeliefPropagation, VariableElimination
 from pgmpy.inference.ExactInference import BeliefPropagationWithMessagePassing
@@ -14,7 +15,6 @@ from pgmpy.models import (
     FactorGraph,
     FunctionalBayesianNetwork,
     JunctionTree,
-    LinearGaussianBayesianNetwork,
 )
 from pgmpy.utils import get_example_model
 
@@ -1346,9 +1346,15 @@ class TestBeliefPropagationWithMessagePassing(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(
+    _check_soft_dependencies("torch", severity="none"),
+    reason="execute only if required dependency present",
+)
 class TestVariableEliminationLinearGaussianAndFunctionalBayesian(unittest.TestCase):
     def setUp(self):
         from pgmpy.utils import get_example_model
+
+        config.set_backend("torch")
 
         self.lgbm = get_example_model("ecoli70")
         self.fbn = FunctionalBayesianNetwork([("X", "Y")])
@@ -1370,3 +1376,6 @@ class TestVariableEliminationLinearGaussianAndFunctionalBayesian(unittest.TestCa
             "Please use the 'predict' method of the FunctionalBayesianNetwork class instead.",
         ):
             inference.query(["Y"])
+
+    def tearDown(self):
+        config.set_backend("numpy")
