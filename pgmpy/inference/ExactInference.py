@@ -1319,13 +1319,13 @@ class BeliefPropagation(Inference):
 
 class BeliefPropagationWithMessagePassing(Inference):
     """
-    Class for performing efficient inference using Belief Propagation method on factor graphs with no loops.
+    Class for performing inference using the Belief Propagation algorithmon acyclic Factor Graphs and Dynamic Factor 
+    Graphs. Recursion makes inference at least 10x faster then the BeliefPropagation class implementation. 
 
-    The message-passing algorithm recursively parses the factor graph to propagate the
-    model's beliefs to infer the posterior distribution of the queried variable. The recursion
-    stops when reaching an observed variable or a unobserved root/leaf variable.
-
-    It does not work for loopy graphs.
+    The message-passing algorithm recursively parses the factor graph to propagate the model's beliefs to infer 
+    the posterior marginals of the queried variables. The recursion stops when reaching an observed variable 
+    or a unobserved root/leaf variable. Virtual evidence and precomputed messages allow to run inference on Dynamic 
+    Factor Graphs.
 
     Parameters
     ----------
