@@ -1,6 +1,6 @@
 name: Linting Checks
 
-on: [pull_request]
+on: [pull_request, merge_group]
 
 jobs:
   lint:
@@ -23,7 +23,7 @@ jobs:
       - name: install dependencies
         run: |
           pip install --upgrade pip
-          pip install .[all,tests] --no-cache-dir
+          pip install .[all,tests]
 
       - name: Get changed files
         id: changed-files
